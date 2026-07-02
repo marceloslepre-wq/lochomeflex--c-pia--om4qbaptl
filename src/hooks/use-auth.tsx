@@ -34,7 +34,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     let isFetching = false
 
     const fetchProfile = async (userId: string) => {
-      if (isFetching) return
+      if (isFetching || !supabase) return
       isFetching = true
       try {
         const { data, error } = await supabase
@@ -74,6 +74,15 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
 
     const initAuth = async () => {
+      if (!supabase) {
+        if (mounted) {
+          setProfile(null)
+          setUser(null)
+          setSession(null)
+          setLoading(false)
+        }
+        return
+      }
       try {
         const {
           data: { session },
@@ -105,6 +114,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
     initAuth()
 
+    if (!supabase) {
+      return () => {
+        mounted = false
+      }
+    }
+
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
@@ -127,16 +142,19 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   }, [])
 
   const signIn = async (email: string, password: string) => {
+    if (!supabase) return { error: new Error('Supabase client not available') }
     const { error } = await supabase.auth.signInWithPassword({ email, password })
     return { error }
   }
 
   const signUp = async (email: string, password: string) => {
+    if (!supabase) return { error: new Error('Supabase client not available') }
     const { error } = await supabase.auth.signUp({ email, password })
     return { error }
   }
 
   const signOut = async () => {
+    if (!supabase) return { error: null }
     const { error } = await supabase.auth.signOut()
     return { error }
   }
