@@ -1,6 +1,10 @@
 import { useState, useEffect } from 'react'
 import useMainStore from '@/stores/main'
 import { customerService, Customer } from '@/services/customers'
+import { pbCustomerService } from '@/services/pb-customers'
+import { useRealtime } from '@/hooks/use-realtime'
+import { Switch } from '@/components/ui/switch'
+import { Label } from '@/components/ui/label'
 import { Card, CardContent } from '@/components/ui/card'
 import {
   Table,
@@ -36,12 +40,15 @@ export default function Customers() {
   const [search, setSearch] = useState('')
   const [customers, setCustomers] = useState<Customer[]>([])
   const [loading, setLoading] = useState(true)
+  const [useSkipCloud, setUseSkipCloud] = useState(true)
 
   const fetchCustomers = async () => {
     try {
       setLoading(true)
-      const data = await customerService.getCustomers()
-      setCustomers(data)
+      const data = useSkipCloud
+        ? await pbCustomerService.getCustomers()
+        : await customerService.getCustomers()
+      setCustomers(data as Customer[])
     } catch (error) {
       toast({
         title: 'Erro',
@@ -55,7 +62,15 @@ export default function Customers() {
 
   useEffect(() => {
     fetchCustomers()
-  }, [])
+  }, [useSkipCloud])
+
+  useRealtime(
+    'customers',
+    () => {
+      fetchCustomers()
+    },
+    useSkipCloud,
+  )
 
   const term = search || globalSearch
   const filtered = customers.filter(
@@ -64,7 +79,11 @@ export default function Customers() {
 
   const handleDelete = async (id: string) => {
     try {
-      await customerService.deleteCustomer(id)
+      if (useSkipCloud) {
+        await pbCustomerService.deleteCustomer(id)
+      } else {
+        await customerService.deleteCustomer(id)
+      }
       setCustomers(customers.filter((c) => c.id !== id))
       toast({ title: 'Cliente Excluído', description: 'O registro foi removido.' })
     } catch (error) {
@@ -84,6 +103,15 @@ export default function Customers() {
           <p className="text-muted-foreground mt-1">Gerencie a base de clientes e empresas.</p>
         </div>
         <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto mt-2 sm:mt-0">
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg border bg-muted/30">
+            <Label
+              htmlFor="ds-toggle"
+              className="text-xs font-medium text-muted-foreground whitespace-nowrap"
+            >
+              {useSkipCloud ? 'Skip Cloud' : 'Supabase'}
+            </Label>
+            <Switch id="ds-toggle" checked={useSkipCloud} onCheckedChange={setUseSkipCloud} />
+          </div>
           <ShareCustomerLinkDialog />
           {can('customers:write') && <CustomerFormDialog onSuccess={fetchCustomers} />}
         </div>
