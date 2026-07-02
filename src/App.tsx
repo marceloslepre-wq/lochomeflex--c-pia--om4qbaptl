@@ -22,6 +22,11 @@ import PublicAssetForm from './pages/PublicAssetForm'
 import PublicTransfer from './pages/PublicTransfer'
 import ForgotPassword from './pages/ForgotPassword'
 import ResetPassword from './pages/ResetPassword'
+import Migration from './pages/Migration'
+import { PbAuthProvider } from '@/hooks/use-pb-auth'
+import SkipCloudInventory from './pages/SkipCloudInventory'
+import Billing from './pages/Billing'
+import Chat from './pages/Chat'
 import { useEffect } from 'react'
 import { supabase } from '@/lib/supabase/client'
 
@@ -71,6 +76,7 @@ const App = () => (
                   <Route path="/sc-inventory" element={<SkipCloudInventory />} />
                   <Route path="/billing" element={<Billing />} />
                   <Route path="/chat" element={<Chat />} />
+                  <Route path="/migration" element={<Migration />} />
                 </Route>
               </Route>
               <Route path="*" element={<NotFound />} />
