@@ -4,6 +4,14 @@ import pb from '@/lib/pocketbase/client'
 export interface MigrationConfig {
   url: string
   key: string
+  throttleDelayMs?: number
+}
+
+export interface MigrationErrorEntry {
+  index: number
+  record: any
+  error: string
+  fieldErrors?: Record<string, string>
 }
 
 export interface CollectionMigrationResult {
@@ -12,7 +20,7 @@ export interface CollectionMigrationResult {
   success: number
   skipped: number
   errors: number
-  errorLog: Array<{ index: number; record: any; error: string }>
+  errorLog: MigrationErrorEntry[]
 }
 
 export interface PreviewResult {
@@ -96,6 +104,10 @@ export function stringifyAddress(addr: any): string {
       .join(', ')
   }
   return String(addr)
+}
+
+export function consolidatePhone(r: any): string {
+  return r.phone_cell || r.phone_res || r.phone_com || r.phone || ''
 }
 
 export async function previewCollection(

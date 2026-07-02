@@ -41,6 +41,7 @@ export default function Migration() {
   const [config, setConfig] = useState<MigrationConfig>({
     url: import.meta.env.VITE_SUPABASE_URL || '',
     key: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || '',
+    throttleDelayMs: 150,
   })
   const [previews, setPreviews] = useState<Record<string, PreviewResult>>({})
   const [results, setResults] = useState<Record<string, CollectionMigrationResult>>({})
@@ -78,7 +79,7 @@ export default function Migration() {
       setResults((r) => ({ ...r, [col]: result }))
       toast({
         title: 'Migração concluída',
-        description: `${result.success} ok, ${result.skipped} pulados, ${result.errors} erros.`,
+        description: `${result.success} bem-sucedidos, ${result.skipped} pulados (duplicados), ${result.errors} falhas.`,
       })
     } catch (err: any) {
       toast({ title: 'Erro', description: err.message, variant: 'destructive' })
@@ -131,6 +132,18 @@ export default function Migration() {
                 value={config.key}
                 onChange={(e) => setConfig({ ...config, key: e.target.value })}
                 placeholder="eyJ..."
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Delay entre registros (ms)</Label>
+              <Input
+                type="number"
+                min={0}
+                max={1000}
+                value={config.throttleDelayMs ?? 150}
+                onChange={(e) =>
+                  setConfig({ ...config, throttleDelayMs: Number(e.target.value) || 0 })
+                }
               />
             </div>
           </div>

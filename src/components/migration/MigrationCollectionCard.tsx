@@ -1,9 +1,11 @@
+import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
-import { Download, Eye, Play } from 'lucide-react'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
+import { ChevronDown, Download, Eye, Play } from 'lucide-react'
 import type { PreviewResult, CollectionMigrationResult } from '@/services/migration'
 
 interface Props {
@@ -33,7 +35,10 @@ export function MigrationCollectionCard({
   onMigrate,
   onDownloadErrors,
 }: Props) {
+  const [errorsOpen, setErrorsOpen] = useState(false)
   const pct = progress.total > 0 ? (progress.current / progress.total) * 100 : 0
+  const hasErrors = !!(result && result.errors > 0)
+
   return (
     <Card>
       <CardContent className="p-4">
@@ -68,9 +73,9 @@ export function MigrationCollectionCard({
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            {result && result.errors > 0 && (
+            {hasErrors && (
               <Button size="sm" variant="outline" onClick={onDownloadErrors}>
-                <Download className="w-4 h-4 mr-1" /> Erros
+                <Download className="w-4 h-4 mr-1" /> CSV
               </Button>
             )}
             <Button
@@ -99,6 +104,45 @@ export function MigrationCollectionCard({
               {progress.current} / {progress.total}
             </p>
           </div>
+        )}
+        {hasErrors && (
+          <Collapsible open={errorsOpen} onOpenChange={setErrorsOpen} className="mt-3">
+            <CollapsibleTrigger asChild>
+              <Button variant="ghost" size="sm" className="w-full">
+                Ver detalhes dos erros ({result!.errors})
+                <ChevronDown
+                  className={`w-4 h-4 ml-1 transition-transform ${errorsOpen ? 'rotate-180' : ''}`}
+                />
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <div className="mt-2 space-y-2 max-h-64 overflow-y-auto rounded-md border p-2">
+                {result!.errorLog.map((entry) => (
+                  <div key={entry.index} className="rounded-md border p-2 text-sm">
+                    <div className="flex items-center gap-2 mb-1">
+                      <Badge variant="destructive" className="text-xs">
+                        #{entry.index + 1}
+                      </Badge>
+                      {entry.record?.name && (
+                        <span className="text-muted-foreground truncate">{entry.record.name}</span>
+                      )}
+                    </div>
+                    {entry.fieldErrors ? (
+                      <ul className="space-y-1">
+                        {Object.entries(entry.fieldErrors).map(([field, msg]) => (
+                          <li key={field} className="text-red-600 dark:text-red-400 text-xs">
+                            <strong>{field}:</strong> {msg}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-red-600 dark:text-red-400 text-xs">{entry.error}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
         )}
       </CardContent>
     </Card>

@@ -1,7 +1,9 @@
 import pb from '@/lib/pocketbase/client'
+import { extractFieldErrors, getErrorMessage } from '@/lib/pocketbase/errors'
 import type {
   MigrationConfig,
   CollectionMigrationResult,
+  MigrationErrorEntry,
   ProgressCallback,
 } from '@/services/migration'
 import {
@@ -10,6 +12,7 @@ import {
   mapInventoryStatus,
   mapBillingStatus,
   stringifyAddress,
+  consolidatePhone,
 } from '@/services/migration'
 
 type R = CollectionMigrationResult
@@ -18,11 +21,16 @@ function newResult(c: string): R {
   return { collection: c, total: 0, success: 0, skipped: 0, errors: 0, errorLog: [] }
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 async function run<T>(
   records: T[],
   fn: (r: T, i: number) => Promise<'success' | 'skipped'>,
   result: R,
   onProgress?: ProgressCallback,
+  throttleMs?: number,
 ) {
   result.total = records.length
   for (let i = 0; i < records.length; i++) {
@@ -32,9 +40,19 @@ async function run<T>(
       else result.success++
     } catch (e: any) {
       result.errors++
-      result.errorLog.push({ index: i, record: records[i], error: e.message || String(e) })
+      const fieldErrors = extractFieldErrors(e)
+      const entry: MigrationErrorEntry = {
+        index: i,
+        record: records[i],
+        error: getErrorMessage(e),
+        fieldErrors: Object.keys(fieldErrors).length > 0 ? fieldErrors : undefined,
+      }
+      result.errorLog.push(entry)
     }
     onProgress?.(i + 1, records.length)
+    if (throttleMs && throttleMs > 0 && i < records.length - 1) {
+      await delay(throttleMs)
+    }
   }
 }
 
@@ -46,23 +64,27 @@ export async function executeCustomersMigration(
   const records = await fetchSupabaseTable(config, 'customers')
   const existing = await pb.collection('customers').getFullList()
   const emails = new Set(existing.map((r: any) => r.email).filter(Boolean))
+  const docs = new Set(existing.map((r: any) => r.document_id).filter(Boolean))
   await run(
     records,
     async (r: any) => {
       if (!r.name) throw new Error('Nome obrigatório')
       if (r.email && emails.has(r.email)) return 'skipped'
+      if (r.document && docs.has(r.document)) return 'skipped'
       await pb.collection('customers').create({
         name: r.name,
         email: r.email || '',
-        phone: r.phone_cell || r.phone_res || r.phone_com || '',
+        phone: consolidatePhone(r),
         document_id: r.document || '',
         address: stringifyAddress(r.address),
       })
       if (r.email) emails.add(r.email)
+      if (r.document) docs.add(r.document)
       return 'success'
     },
     result,
     onProgress,
+    config.throttleDelayMs,
   )
   return result
 }
@@ -85,7 +107,7 @@ export async function executeInventoryMigration(
         description: r.description || '',
         sku: r.code || '',
         category: r.category || '',
-        daily_rate: r.daily_price || 0,
+        daily_rate: r.daily_price ?? 0,
         status: mapInventoryStatus(r.condition_status),
       })
       if (r.code) skus.add(r.code)
@@ -93,6 +115,7 @@ export async function executeInventoryMigration(
     },
     result,
     onProgress,
+    config.throttleDelayMs,
   )
   return result
 }
@@ -144,6 +167,7 @@ export async function executeRentalsMigration(
     },
     result,
     onProgress,
+    config.throttleDelayMs,
   )
   return result
 }
@@ -166,6 +190,7 @@ export async function executeContractsMigration(
     },
     result,
     onProgress,
+    config.throttleDelayMs,
   )
   return result
 }
@@ -193,6 +218,7 @@ export async function executeBillingMigration(
     },
     result,
     onProgress,
+    config.throttleDelayMs,
   )
   return result
 }
