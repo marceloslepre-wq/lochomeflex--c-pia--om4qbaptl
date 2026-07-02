@@ -1,5 +1,5 @@
 // AVOID UPDATING THIS FILE DIRECTLY. It is automatically generated.
-import { createClient } from '@supabase/supabase-js'
+import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import type { Database } from './types'
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string
@@ -8,10 +8,13 @@ const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY a
 // Import the supabase client like this:
 // import { supabase } from "@/lib/supabase/client";
 
-export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
-  auth: {
-    storage: localStorage,
-    persistSession: true,
-    autoRefreshToken: true,
-  },
-})
+export const supabase: SupabaseClient<Database> | null =
+  SUPABASE_URL && SUPABASE_URL.trim() !== ''
+    ? createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY || '', {
+        auth: {
+          storage: localStorage,
+          persistSession: true,
+          autoRefreshToken: true,
+        },
+      })
+    : null

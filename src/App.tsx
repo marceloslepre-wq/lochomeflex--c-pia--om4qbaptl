@@ -33,6 +33,7 @@ import { supabase } from '@/lib/supabase/client'
 const OverdueChecker = () => {
   useEffect(() => {
     const checkOverdue = async () => {
+      if (!supabase) return
       try {
         await supabase.rpc('update_overdue_rentals')
       } catch (error) {
