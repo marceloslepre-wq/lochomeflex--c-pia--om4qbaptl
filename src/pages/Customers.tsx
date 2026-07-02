@@ -17,6 +17,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Search, User, Trash2, Download } from 'lucide-react'
 import { CustomerFormDialog } from '@/components/customers/CustomerFormDialog'
+import { PbCustomerFormDialog } from '@/components/pb/PbCustomerFormDialog'
 import { ShareCustomerLinkDialog } from '@/components/customers/ShareCustomerLinkDialog'
 import { Button } from '@/components/ui/button'
 import {
@@ -113,7 +114,12 @@ export default function Customers() {
             <Switch id="ds-toggle" checked={useSkipCloud} onCheckedChange={setUseSkipCloud} />
           </div>
           <ShareCustomerLinkDialog />
-          {can('customers:write') && <CustomerFormDialog onSuccess={fetchCustomers} />}
+          {can('customers:write') &&
+            (useSkipCloud ? (
+              <PbCustomerFormDialog onSuccess={fetchCustomers} />
+            ) : (
+              <CustomerFormDialog onSuccess={fetchCustomers} />
+            ))}
         </div>
       </div>
 
@@ -203,12 +209,15 @@ export default function Customers() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        {can('customers:write') && (
-                          <CustomerFormDialog
-                            customer={customer as any}
-                            onSuccess={fetchCustomers}
-                          />
-                        )}
+                        {can('customers:write') &&
+                          (useSkipCloud ? (
+                            <PbCustomerFormDialog customer={customer} onSuccess={fetchCustomers} />
+                          ) : (
+                            <CustomerFormDialog
+                              customer={customer as any}
+                              onSuccess={fetchCustomers}
+                            />
+                          ))}
                         {can('customers:delete') && (
                           <AlertDialog>
                             <AlertDialogTrigger asChild>

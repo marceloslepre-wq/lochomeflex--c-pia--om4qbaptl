@@ -8,6 +8,9 @@ import {
   BookOpen,
   LogOut,
   Briefcase,
+  Cloud,
+  Receipt,
+  Bot,
 } from 'lucide-react'
 import {
   Sidebar,
@@ -36,6 +39,9 @@ export function AppSidebar() {
     { title: 'Patrimônio', url: '/assets', icon: Briefcase, show: true },
     { title: 'Locações', url: '/rentals', icon: FileText, show: true },
     { title: 'Clientes', url: '/customers', icon: Users, show: true },
+    { title: 'Estoque (Cloud)', url: '/sc-inventory', icon: Cloud, show: true },
+    { title: 'Cobranças', url: '/billing', icon: Receipt, show: true },
+    { title: 'Helena AI', url: '/chat', icon: Bot, show: true },
     { title: 'Guia de Uso', url: '/guide', icon: BookOpen, show: true },
     {
       title: 'Configurações',

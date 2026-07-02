@@ -44,35 +44,40 @@ const OverdueChecker = () => {
 const App = () => (
   <BrowserRouter future={{ v7_startTransition: false, v7_relativeSplatPath: false }}>
     <AuthProvider>
-      <StoreProvider>
-        <TooltipProvider>
-          <OverdueChecker />
-          <Toaster />
-          <Sonner />
-          <Routes>
-            <Route path="/" element={<Index />} />
-            <Route path="/public/customer/new" element={<PublicCustomerForm />} />
-            <Route path="/public/asset/new" element={<PublicAssetForm />} />
-            <Route path="/public/transfer" element={<PublicTransfer />} />
-            <Route path="/public/forgot-password" element={<ForgotPassword />} />
-            <Route path="/public/reset-password" element={<ResetPassword />} />
-            <Route element={<ProtectedRoute />}>
-              <Route element={<Layout />}>
-                <Route path="/dashboard" element={<Dashboard />} />
-                <Route path="/inventory" element={<Inventory />} />
-                <Route path="/inventory/:id" element={<ItemDetail />} />
-                <Route path="/assets" element={<Assets />} />
-                <Route path="/customers" element={<Customers />} />
-                <Route path="/rentals" element={<Rentals />} />
-                <Route path="/rentals/:id" element={<RentalDetail />} />
-                <Route path="/settings" element={<Settings />} />
-                <Route path="/guide" element={<Guide />} />
+      <PbAuthProvider>
+        <StoreProvider>
+          <TooltipProvider>
+            <OverdueChecker />
+            <Toaster />
+            <Sonner />
+            <Routes>
+              <Route path="/" element={<Index />} />
+              <Route path="/public/customer/new" element={<PublicCustomerForm />} />
+              <Route path="/public/asset/new" element={<PublicAssetForm />} />
+              <Route path="/public/transfer" element={<PublicTransfer />} />
+              <Route path="/public/forgot-password" element={<ForgotPassword />} />
+              <Route path="/public/reset-password" element={<ResetPassword />} />
+              <Route element={<ProtectedRoute />}>
+                <Route element={<Layout />}>
+                  <Route path="/dashboard" element={<Dashboard />} />
+                  <Route path="/inventory" element={<Inventory />} />
+                  <Route path="/inventory/:id" element={<ItemDetail />} />
+                  <Route path="/assets" element={<Assets />} />
+                  <Route path="/customers" element={<Customers />} />
+                  <Route path="/rentals" element={<Rentals />} />
+                  <Route path="/rentals/:id" element={<RentalDetail />} />
+                  <Route path="/settings" element={<Settings />} />
+                  <Route path="/guide" element={<Guide />} />
+                  <Route path="/sc-inventory" element={<SkipCloudInventory />} />
+                  <Route path="/billing" element={<Billing />} />
+                  <Route path="/chat" element={<Chat />} />
+                </Route>
               </Route>
-            </Route>
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </TooltipProvider>
-      </StoreProvider>
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </TooltipProvider>
+        </StoreProvider>
+      </PbAuthProvider>
     </AuthProvider>
   </BrowserRouter>
 )
