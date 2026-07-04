@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
-import { supabase } from '@/lib/supabase/client'
+import { useNavigate, Link, useSearchParams } from 'react-router-dom'
+import pb from '@/lib/pocketbase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -22,16 +22,11 @@ export default function ResetPassword() {
   const navigate = useNavigate()
   const { toast } = useToast()
 
-  useEffect(() => {
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((event) => {
-      if (event === 'PASSWORD_RECOVERY') {
-        // A sessão de redefinição está ativa e pronta para receber nova senha
-      }
-    })
+  const [searchParams] = useSearchParams()
 
-    return () => subscription.unsubscribe()
+  useEffect(() => {
+    // No Supabase subscription needed — PocketBase password reset
+    // is handled via token from the email link query params.
   }, [])
 
   const handleReset = async (e: React.FormEvent) => {
@@ -55,26 +50,32 @@ export default function ResetPassword() {
 
     setIsSubmitting(true)
 
-    // Atualiza a senha no Supabase Auth.
-    // Durante um evento de PASSWORD_RECOVERY, o update user pode alterar a senha de forma segura.
-    const { error } = await supabase.auth.updateUser({ password })
+    try {
+      const token = searchParams.get('token')
+      if (!token) {
+        toast({
+          title: 'Erro',
+          description: 'Link inválido. Solicite um novo link de recuperação.',
+          variant: 'destructive',
+        })
+        setIsSubmitting(false)
+        return
+      }
 
-    setIsSubmitting(false)
-
-    if (error) {
+      await pb.collection('users').confirmPasswordReset(token, password, confirmPassword)
+      toast({
+        title: 'Senha atualizada',
+        description: 'Senha atualizada com sucesso. Faça login com sua nova senha.',
+      })
+      navigate('/')
+    } catch (error: any) {
       toast({
         title: 'Erro',
         description: 'Link expirado ou inválido. Solicite um novo link de recuperação.',
         variant: 'destructive',
       })
-    } else {
-      toast({
-        title: 'Senha atualizada',
-        description: 'Senha atualizada com sucesso. Faça login com sua nova senha.',
-      })
-      // Desloga da sessão de recovery temporária e redireciona para login
-      await supabase.auth.signOut()
-      navigate('/')
+    } finally {
+      setIsSubmitting(false)
     }
   }
 

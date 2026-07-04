@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { supabase } from '@/lib/supabase/client'
+import pb from '@/lib/pocketbase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -26,23 +26,12 @@ export default function ForgotPassword() {
 
     setIsSubmitting(true)
 
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/public/reset-password`,
-    })
-
-    setIsSubmitting(false)
-
-    if (error) {
-      toast({
-        title: 'Erro',
-        description: error.message,
-        variant: 'destructive',
-      })
-    } else {
-      toast({
-        title: 'Email enviado',
-        description:
-          'Se o email existe, você receberá um link de recuperação. Verifique sua caixa de entrada.',
+    try {
+      await pb.collection('users').requestPasswordReset(email)
+      setIsSubmitting(false)
+       toast({
+         title: 'Email enviado',
+         description:          'Se o email existe, você receberá um link de recuperação. Verifique sua caixa de entrada.',
       })
       setEmail('')
     }
