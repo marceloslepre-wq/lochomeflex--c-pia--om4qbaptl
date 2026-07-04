@@ -16,6 +16,7 @@ import {
   stringifyAddress,
   consolidatePhone,
   safeJsonParse,
+  parseAddressParts,
 } from '@/services/migration'
 
 type R = CollectionMigrationResult
@@ -149,43 +150,80 @@ export async function executeLocationsMigration(
   onProgress?: ProgressCallback,
 ): Promise<R> {
   const result = newResult('locations')
-  let total = 0
-  try {
-    total = await fetchSupabaseCount(config, 'locais')
-  } catch {
-    total = 0
-  }
-  result.total = total
-  const existing = await pb.collection('locations').getFullList()
-  const names = new Set(existing.map((r: any) => r.name).filter(Boolean))
 
-  let offset = 0
-  for await (const { records } of fetchSupabaseTableBatches(config, 'locais')) {
-    await runBatch(
-      records,
-      async (r: any) => {
-        const name = r.nome || r.name || ''
-        if (!name) throw new Error('Nome obrigatório')
-        if (names.has(name)) return 'skipped'
-        await pb.collection('locations').create({
-          name,
-          address: r.address || '',
-          city: r.city || '',
-          state: r.state || '',
-          zip_code: r.zip_code || '',
-          active: r.ativo !== false,
-        })
-        names.add(name)
-        return 'success'
-      },
-      result,
-      offset,
-      total,
-      onProgress,
-      config.throttleDelayMs,
-    )
-    offset += records.length
+  let locaisRecords: any[] = []
+  try {
+    for await (const { records } of fetchSupabaseTableBatches(config, 'locais')) {
+      locaisRecords.push(...records)
+    }
+  } catch {
+    /* locais table may not exist */
   }
+
+  let settingsLocations: any[] = []
+  try {
+    const settingsRecords = await fetchSupabaseTable(config, 'settings')
+    for (const s of settingsRecords) {
+      if (s.locations) {
+        const locs = typeof s.locations === 'string' ? safeJsonParse(s.locations, []) : s.locations
+        if (Array.isArray(locs)) settingsLocations.push(...locs)
+      }
+    }
+  } catch {
+    /* settings table may not exist */
+  }
+
+  const merged = new Map<string, any>()
+  for (const r of locaisRecords) {
+    const name = (r.nome || r.name || '').trim()
+    if (name) merged.set(name, { name, ativo: r.ativo, _address: r.address || '' })
+  }
+  for (const sl of settingsLocations) {
+    const name = (sl.name || sl.nome || '').trim()
+    if (!name) continue
+    const ex = merged.get(name)
+    if (ex) {
+      if (sl.address && !ex._address) ex._address = sl.address
+    } else {
+      merged.set(name, { name, ativo: true, _address: sl.address || '' })
+    }
+  }
+
+  const allRecords = Array.from(merged.values())
+  result.total = allRecords.length
+
+  const existingPb = await pb.collection('locations').getFullList()
+  const pbByName = new Map(existingPb.map((r: any) => [r.name, r]))
+
+  await runBatch(
+    allRecords,
+    async (r: any) => {
+      const name = r.name
+      if (!name) throw new Error('Nome obrigatório')
+      const parsed = parseAddressParts(r._address || '')
+      const payload = {
+        name,
+        address: parsed.address,
+        city: parsed.city,
+        state: parsed.state,
+        zip_code: parsed.zip_code,
+        active: r.ativo !== false,
+      }
+      const existing = pbByName.get(name)
+      if (existing) {
+        await pb.collection('locations').update(existing.id, payload)
+      } else {
+        await pb.collection('locations').create(payload)
+      }
+      return 'success'
+    },
+    result,
+    0,
+    allRecords.length,
+    onProgress,
+    config.throttleDelayMs,
+  )
+
   return result
 }
 

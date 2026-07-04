@@ -353,6 +353,44 @@ export function consolidatePhone(r: any): string {
   return r.phone_cell || r.phone_res || r.phone_com || r.phone || ''
 }
 
+export function parseAddressParts(rawAddress: string): {
+  address: string
+  city: string
+  state: string
+  zip_code: string
+} {
+  let address = (rawAddress || '').trim()
+  let city = ''
+  let state = ''
+  let zip_code = ''
+
+  const zipMatch = address.match(/\b(\d{5}-\d{3})\b/)
+  if (zipMatch) {
+    zip_code = zipMatch[1]
+    address = address.replace(zipMatch[0], '').trim()
+  } else {
+    const zipMatch2 = address.match(/\b(\d{8})\b/)
+    if (zipMatch2) {
+      zip_code = zipMatch2[1]
+      address = address.replace(zipMatch2[0], '').trim()
+    }
+  }
+
+  const cityStateMatch = address.match(/,?\s*([^,/]+?)\/([A-Z]{2})\s*$/)
+  if (cityStateMatch) {
+    city = cityStateMatch[1].trim()
+    state = cityStateMatch[2].trim()
+    address = address.replace(cityStateMatch[0], '').trim()
+  }
+
+  address = address
+    .replace(/,\s*,/g, ',')
+    .replace(/^,\s*|,\s*$/g, '')
+    .trim()
+
+  return { address, city, state, zip_code }
+}
+
 const MAX_WARNINGS = 50
 
 export async function previewCollection(
@@ -370,17 +408,19 @@ export async function previewCollection(
   try {
     totalRecords = await fetchSupabaseCount(config, sourceTable)
   } catch (err: any) {
-    return {
-      collection,
-      totalRecords: 0,
-      newRecords: 0,
-      duplicates: 0,
-      invalid: 0,
-      warnings: [
-        isTimeoutError(err)
-          ? `Timeout ao contar registros: ${err.message}`
-          : `Erro ao contar registros: ${err.message}`,
-      ],
+    if (collection !== 'locations') {
+      return {
+        collection,
+        totalRecords: 0,
+        newRecords: 0,
+        duplicates: 0,
+        invalid: 0,
+        warnings: [
+          isTimeoutError(err)
+            ? `Timeout ao contar registros: ${err.message}`
+            : `Erro ao contar registros: ${err.message}`,
+        ],
+      }
     }
   }
 
@@ -420,18 +460,55 @@ export async function previewCollection(
         }
       }
     } else if (collection === 'locations') {
-      const sourceTable = 'locais'
       try {
-        const existing = await pb.collection('locations').getFullList()
-        const names = new Set(existing.map((r: any) => r.name).filter(Boolean))
-        for await (const { records } of fetchSupabaseTableBatches(config, sourceTable)) {
-          for (const r of records) {
-            if (r.nome && names.has(r.nome)) duplicates++
-            if (warnings.length < MAX_WARNINGS && !r.nome) {
-              invalid++
-              warnings.push(`Registro ${r.id || '?'} sem nome`)
+        const existingPb = await pb.collection('locations').getFullList()
+        const names = new Set(existingPb.map((r: any) => r.name).filter(Boolean))
+
+        let locaisRecords: any[] = []
+        try {
+          for await (const { records } of fetchSupabaseTableBatches(config, 'locais')) {
+            locaisRecords.push(...records)
+          }
+        } catch {
+          /* locais table may not exist */
+        }
+
+        let settingsLocations: any[] = []
+        try {
+          const settingsRecords = await fetchSupabaseTable(config, 'settings')
+          for (const s of settingsRecords) {
+            if (s.locations) {
+              const locs =
+                typeof s.locations === 'string' ? safeJsonParse(s.locations, []) : s.locations
+              if (Array.isArray(locs)) settingsLocations.push(...locs)
             }
           }
+        } catch {
+          /* settings table may not exist */
+        }
+
+        const merged = new Map<string, any>()
+        for (const r of locaisRecords) {
+          const name = (r.nome || r.name || '').trim()
+          if (name) merged.set(name, { name, _address: r.address || '' })
+        }
+        for (const sl of settingsLocations) {
+          const name = (sl.name || sl.nome || '').trim()
+          if (!name) continue
+          const ex = merged.get(name)
+          if (ex) {
+            if (sl.address && !ex._address) ex._address = sl.address
+          } else {
+            merged.set(name, { name, _address: sl.address || '' })
+          }
+        }
+
+        totalRecords = merged.size
+        for (const [, r] of merged) {
+          if (names.has(r.name)) duplicates++
+        }
+        if (totalRecords === 0 && warnings.length < MAX_WARNINGS) {
+          warnings.push('Nenhum local encontrado nas tabelas "locais" ou "settings".')
         }
       } catch (err: any) {
         if (warnings.length < MAX_WARNINGS) {
