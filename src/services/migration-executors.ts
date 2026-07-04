@@ -361,22 +361,25 @@ export async function executeMigration(
   collection: string,
   onProgress?: ProgressCallback,
 ): Promise<R> {
-  if (!config.url || !config.key) {
+  const url = (config.url || '').trim()
+  const key = (config.key || '').trim()
+  if (!url || !key) {
     throw new Error('Configuração do Supabase incompleta. Verifique a URL e a chave de acesso.')
   }
+  const sanitizedConfig: MigrationConfig = { ...config, url, key }
   switch (collection) {
     case 'customers':
-      return executeCustomersMigration(config, onProgress)
+      return executeCustomersMigration(sanitizedConfig, onProgress)
     case 'inventory':
-      return executeInventoryMigration(config, onProgress)
+      return executeInventoryMigration(sanitizedConfig, onProgress)
     case 'locations':
-      return executeLocationsMigration(config, onProgress)
+      return executeLocationsMigration(sanitizedConfig, onProgress)
     case 'rentals':
-      return executeRentalsMigration(config, onProgress)
+      return executeRentalsMigration(sanitizedConfig, onProgress)
     case 'contracts':
-      return executeContractsMigration(config, onProgress)
+      return executeContractsMigration(sanitizedConfig, onProgress)
     case 'billing':
-      return executeBillingMigration(config, onProgress)
+      return executeBillingMigration(sanitizedConfig, onProgress)
     default:
       throw new Error(`Coleção desconhecida: ${collection}`)
   }

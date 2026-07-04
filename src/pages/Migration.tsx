@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { Navigate } from 'react-router-dom'
 import { usePermissions } from '@/hooks/use-permissions'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -53,13 +53,22 @@ export default function Migration() {
   const [confirmCol, setConfirmCol] = useState<string | null>(null)
   const [loadingPrev, setLoadingPrev] = useState<string | null>(null)
   const [previewErrors, setPreviewErrors] = useState<Record<string, string | undefined>>({})
+  const configRef = useRef(config)
+  configRef.current = config
 
   if (!can('users:manage')) return <Navigate to="/dashboard" replace />
 
   const handlePreview = async (col: string) => {
     setLoadingPrev(col)
     try {
-      const preview = await previewCollection(config, col as any)
+      const preview = await previewCollection(
+        {
+          ...configRef.current,
+          url: configRef.current.url.trim(),
+          key: configRef.current.key.trim(),
+        },
+        col as any,
+      )
       setPreviews((p) => ({ ...p, [col]: preview }))
       if (preview.warnings.length > 0 && preview.totalRecords === 0) {
         const errMsg = preview.warnings[0]
@@ -96,8 +105,14 @@ export default function Migration() {
     setMigrating(col)
     setProgress({ current: 0, total: 0 })
     try {
-      const result = await executeMigration(config, col, (c, t) =>
-        setProgress({ current: c, total: t }),
+      const result = await executeMigration(
+        {
+          ...configRef.current,
+          url: configRef.current.url.trim(),
+          key: configRef.current.key.trim(),
+        },
+        col,
+        (c, t) => setProgress({ current: c, total: t }),
       )
       setResults((r) => ({ ...r, [col]: result }))
       toast({
