@@ -250,10 +250,18 @@ export async function executeRentalsMigration(
 
   const sbCustomers = await fetchSupabaseTable(config, 'customers')
   const pbCustomers = await pb.collection('customers').getFullList()
-  const emailToPb = new Map(pbCustomers.map((c: any) => [c.email, c.id]))
+  const emailToPb = new Map(
+    pbCustomers.filter((c: any) => c.email).map((c: any) => [c.email, c.id]),
+  )
+  const docToPb = new Map(
+    pbCustomers.filter((c: any) => c.document_id).map((c: any) => [c.document_id, c.id]),
+  )
   const custMap = new Map<string, string>()
-  for (const c of sbCustomers)
-    if (c.email && emailToPb.has(c.email)) custMap.set(c.id, emailToPb.get(c.email)!)
+  for (const c of sbCustomers) {
+    const pbId =
+      (c.email && emailToPb.get(c.email)) || (c.document && docToPb.get(c.document)) || null
+    if (pbId) custMap.set(c.id, pbId)
+  }
 
   const sbInv = await fetchSupabaseTable(config, 'inventory')
   const pbInv = await pb.collection('inventory').getFullList()
@@ -267,35 +275,69 @@ export async function executeRentalsMigration(
     existingRentals.map((r: any) => `${r.customer}:${r.start_date}`),
   )
 
+  let sbLocais: any[] = []
+  try {
+    sbLocais = await fetchSupabaseTable(config, 'locais')
+  } catch {
+    /* locais table may not exist in source */
+  }
+  const pbLocations = await pb.collection('locations').getFullList()
+  const locNameToPb = new Map(pbLocations.map((l: any) => [l.name, l.id]))
+  const locMap = new Map<string, string>()
+  for (const loc of sbLocais) {
+    const name = (loc.nome || loc.name || '').trim()
+    if (name && locNameToPb.has(name)) locMap.set(loc.id, locNameToPb.get(name)!)
+  }
+
   let offset = 0
   for await (const { records } of fetchSupabaseTableBatches(config, 'rentals')) {
     await runBatch(
       records,
       async (r: any) => {
         const custPbId = r.customer_id ? custMap.get(r.customer_id) : null
-        if (!custPbId) throw new Error('Cliente não encontrado no destino')
+        if (!custPbId)
+          throw new Error(
+            `Cliente não encontrado (SB ID: ${r.customer_id || 'n/a'}). Verifique se o cliente foi migrado corretamente.`,
+          )
         const rentalKey = `${custPbId}:${r.start_date}`
         if (existingRentalKeys.has(rentalKey)) return 'skipped'
         let itemIds: string[] = []
         if (r.items) {
           const items = typeof r.items === 'string' ? safeJsonParse(r.items, []) : r.items
           if (Array.isArray(items)) {
+            const missingItems: string[] = []
             itemIds = items
               .map((it: any) => {
                 const sbId = typeof it === 'string' ? it : it.id || it.inventory_id
-                return sbId ? invMap.get(sbId) : null
+                if (!sbId) return null
+                const pbId = invMap.get(sbId)
+                if (!pbId) missingItems.push(sbId)
+                return pbId
               })
               .filter(Boolean) as string[]
+            if (missingItems.length > 0)
+              throw new Error(
+                `Itens de inventário não encontrados (SB IDs: ${missingItems.join(', ')}). Verifique se os itens foram migrados.`,
+              )
           }
         }
-        const created = await pb.collection('rentals').create({
+        const pickupLocationId = r.local_retirada_id
+          ? locMap.get(r.local_retirada_id) || null
+          : null
+        const returnLocationId = r.local_devolucao_id
+          ? locMap.get(r.local_devolucao_id) || null
+          : null
+        const payload: Record<string, any> = {
           customer: custPbId,
           items: itemIds,
           start_date: r.start_date,
           end_date: r.expected_return_date || '',
           total_price: r.total || 0,
           status: mapRentalStatus(r.status),
-        })
+        }
+        if (pickupLocationId) payload.pickup_location = pickupLocationId
+        if (returnLocationId) payload.return_location = returnLocationId
+        await pb.collection('rentals').create(payload)
         existingRentalKeys.add(rentalKey)
         return 'success'
       },

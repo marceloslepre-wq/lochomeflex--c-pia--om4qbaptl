@@ -158,7 +158,7 @@ function delay(ms: number): Promise<void> {
 async function fetchWithTimeout(
   url: string,
   options: RequestInit,
-  timeoutMs: number = 30000,
+  timeoutMs: number = 60000,
 ): Promise<Response> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), timeoutMs)
@@ -185,11 +185,10 @@ async function fetchWithTimeout(
 }
 
 export async function fetchSupabaseCount(config: MigrationConfig, table: string): Promise<number> {
-  const url = `${buildSupabaseUrl(config, table)}?select=*`
+  const url = `${buildSupabaseUrl(config, table)}?select=*&limit=1`
   const headers = {
     ...buildSupabaseHeaders(config),
     Prefer: 'count=exact',
-    Range: '0-0',
   }
 
   let lastError: any = null
