@@ -28,12 +28,20 @@ export default function ForgotPassword() {
 
     try {
       await pb.collection('users').requestPasswordReset(email)
-      setIsSubmitting(false)
-       toast({
-         title: 'Email enviado',
-         description:          'Se o email existe, você receberá um link de recuperação. Verifique sua caixa de entrada.',
+      toast({
+        title: 'Email enviado',
+        description:
+          'Se o email existe, você receberá um link de recuperação. Verifique sua caixa de entrada.',
       })
       setEmail('')
+    } catch {
+      toast({
+        title: 'Erro',
+        description: 'Não foi possível enviar o email. Tente novamente.',
+        variant: 'destructive',
+      })
+    } finally {
+      setIsSubmitting(false)
     }
   }
 
