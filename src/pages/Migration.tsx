@@ -23,7 +23,9 @@ import {
 } from 'lucide-react'
 import {
   MIGRATION_COLLECTIONS,
+  MIGRATION_BATCH_SIZE,
   previewCollection,
+  isTimeoutError,
   type MigrationConfig,
   type PreviewResult,
   type CollectionMigrationResult,
@@ -62,7 +64,14 @@ export default function Migration() {
         description: `${preview.newRecords} novos, ${preview.duplicates} duplicados.`,
       })
     } catch (err: any) {
-      toast({ title: 'Erro', description: err.message, variant: 'destructive' })
+      const desc = isTimeoutError(err)
+        ? 'Timeout ao buscar dados do banco de origem. Verifique a conexão ou tente novamente.'
+        : err.message || 'Erro desconhecido'
+      toast({
+        title: isTimeoutError(err) ? 'Timeout' : 'Erro',
+        description: desc,
+        variant: 'destructive',
+      })
     } finally {
       setLoadingPrev(null)
     }
@@ -82,7 +91,14 @@ export default function Migration() {
         description: `${result.success} bem-sucedidos, ${result.skipped} pulados (duplicados), ${result.errors} falhas.`,
       })
     } catch (err: any) {
-      toast({ title: 'Erro', description: err.message, variant: 'destructive' })
+      const desc = isTimeoutError(err)
+        ? 'Timeout ao buscar dados do banco de origem. A migração foi interrompida. Tente novamente.'
+        : err.message || 'Erro desconhecido'
+      toast({
+        title: isTimeoutError(err) ? 'Timeout' : 'Erro',
+        description: desc,
+        variant: 'destructive',
+      })
     } finally {
       setMigrating(null)
     }
@@ -150,7 +166,8 @@ export default function Migration() {
           <div className="flex items-center gap-2">
             <ShieldAlert className="w-4 h-4 text-amber-500" />
             <span className="text-sm text-muted-foreground">
-              Apenas operações de leitura são realizadas no banco de origem.
+              Apenas operações de leitura são realizadas no banco de origem. Os dados são
+              processados em lotes de {MIGRATION_BATCH_SIZE} registros para evitar timeouts.
             </span>
           </div>
         </CardContent>

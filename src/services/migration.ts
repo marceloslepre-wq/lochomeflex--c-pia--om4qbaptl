@@ -1,6 +1,8 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import pb from '@/lib/pocketbase/client'
 
+export const MIGRATION_BATCH_SIZE = 100
+
 export interface MigrationConfig {
   url: string
   key: string
@@ -50,15 +52,78 @@ export const MIGRATION_COLLECTIONS = [
 
 export type MigrationCollectionId = (typeof MIGRATION_COLLECTIONS)[number]['id']
 
+export function isTimeoutError(err: any): boolean {
+  const code = err?.code || err?.response?.code
+  const msg = (err?.message || '').toLowerCase()
+  return (
+    code === '57014' ||
+    msg.includes('timeout') ||
+    msg.includes('timed out') ||
+    msg.includes('statement timeout')
+  )
+}
+
 export function createMigrationClient(config: MigrationConfig): SupabaseClient {
   return createClient(config.url, config.key)
 }
 
-export async function fetchSupabaseTable(config: MigrationConfig, table: string): Promise<any[]> {
+export async function fetchSupabaseCount(config: MigrationConfig, table: string): Promise<number> {
   const client = createMigrationClient(config)
-  const { data, error } = await client.from(table).select('*')
-  if (error) throw new Error(`Erro ao buscar ${table}: ${error.message}`)
-  return data || []
+  const { count, error } = await client.from(table).select('*', { count: 'exact', head: true })
+  if (error) {
+    if (isTimeoutError(error)) {
+      throw new Error(
+        `Timeout ao contar registros de "${table}". O banco de origem pode estar sobrecarregado. Tente novamente.`,
+      )
+    }
+    throw new Error(`Erro ao contar "${table}": ${error.message}`)
+  }
+  return count || 0
+}
+
+export async function* fetchSupabaseTableBatches(
+  config: MigrationConfig,
+  table: string,
+  batchSize: number = MIGRATION_BATCH_SIZE,
+): AsyncGenerator<{ records: any[]; batchIndex: number; totalSoFar: number }> {
+  const client = createMigrationClient(config)
+  let from = 0
+  let batchIndex = 0
+  let totalSoFar = 0
+
+  while (true) {
+    const { data, error } = await client
+      .from(table)
+      .select('*')
+      .range(from, from + batchSize - 1)
+
+    if (error) {
+      if (isTimeoutError(error)) {
+        throw new Error(
+          `Timeout ao buscar "${table}" (lote ${batchIndex + 1}, registros ${from + 1}–${from + batchSize}). ` +
+            `O banco de origem demorou demais. Tente novamente ou reduza o tamanho do lote.`,
+        )
+      }
+      throw new Error(`Erro ao buscar "${table}": ${error.message}`)
+    }
+
+    if (!data || data.length === 0) break
+
+    totalSoFar += data.length
+    yield { records: data, batchIndex, totalSoFar }
+
+    if (data.length < batchSize) break
+    from += batchSize
+    batchIndex++
+  }
+}
+
+export async function fetchSupabaseTable(config: MigrationConfig, table: string): Promise<any[]> {
+  const allRecords: any[] = []
+  for await (const { records } of fetchSupabaseTableBatches(config, table)) {
+    allRecords.push(...records)
+  }
+  return allRecords
 }
 
 export function mapRentalStatus(status: string): string {
@@ -110,46 +175,61 @@ export function consolidatePhone(r: any): string {
   return r.phone_cell || r.phone_res || r.phone_com || r.phone || ''
 }
 
+const MAX_WARNINGS = 50
+
 export async function previewCollection(
   config: MigrationConfig,
   collection: MigrationCollectionId,
 ): Promise<PreviewResult> {
   const sourceTable =
     collection === 'contracts' || collection === 'billing' ? 'rentals' : collection
-  const records = await fetchSupabaseTable(config, sourceTable)
+
+  const totalRecords = await fetchSupabaseCount(config, sourceTable)
 
   let duplicates = 0
+  let invalid = 0
   const warnings: string[] = []
 
   if (collection === 'customers') {
     const existing = await pb.collection('customers').getFullList()
     const emails = new Set(existing.map((r: any) => r.email).filter(Boolean))
-    duplicates = records.filter((r: any) => r.email && emails.has(r.email)).length
-    records.forEach((r: any) => {
-      if (!r.name) warnings.push(`Registro ${r.id} sem nome`)
-    })
+    for await (const { records } of fetchSupabaseTableBatches(config, sourceTable)) {
+      for (const r of records) {
+        if (r.email && emails.has(r.email)) duplicates++
+        if (warnings.length < MAX_WARNINGS && !r.name) {
+          invalid++
+          warnings.push(`Registro ${r.id || '?'} sem nome`)
+        }
+      }
+    }
   } else if (collection === 'inventory') {
     const existing = await pb.collection('inventory').getFullList()
     const skus = new Set(existing.map((r: any) => r.sku).filter(Boolean))
-    duplicates = records.filter((r: any) => r.code && skus.has(r.code)).length
-    records.forEach((r: any) => {
-      if (!r.name) warnings.push(`Registro ${r.id} sem nome`)
-      if (r.daily_price == null) warnings.push(`Registro ${r.id} sem diária`)
-    })
-  } else if (collection === 'rentals') {
-    duplicates = (await pb.collection('rentals').getFullList()).length
-  } else if (collection === 'contracts') {
-    duplicates = (await pb.collection('contracts').getFullList()).length
-  } else if (collection === 'billing') {
-    duplicates = (await pb.collection('billing').getFullList()).length
+    for await (const { records } of fetchSupabaseTableBatches(config, sourceTable)) {
+      for (const r of records) {
+        if (r.code && skus.has(r.code)) duplicates++
+        if (warnings.length < MAX_WARNINGS) {
+          if (!r.name) {
+            invalid++
+            warnings.push(`Registro ${r.id || '?'} sem nome`)
+          }
+          if (r.daily_price == null) {
+            invalid++
+            warnings.push(`Registro ${r.id || '?'} sem diária`)
+          }
+        }
+      }
+    }
+  } else if (collection === 'rentals' || collection === 'contracts' || collection === 'billing') {
+    duplicates = (await pb.collection(collection).getFullList()).length
   }
 
   return {
     collection,
-    totalRecords: records.length,
-    newRecords: Math.max(0, records.length - duplicates),
+    totalRecords,
+    newRecords: Math.max(0, totalRecords - duplicates),
     duplicates,
-    invalid: warnings.length,
+    invalid,
     warnings,
   }
 }
