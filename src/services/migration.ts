@@ -181,12 +181,10 @@ export async function fetchSupabaseCount(config: MigrationConfig, table: string)
   let lastError: any = null
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
-      const res = await fetchWithTimeout(url, { method: 'GET', headers })
+      const res = await fetchWithTimeout(url, { method: 'HEAD', headers })
       const contentRange = res.headers.get('Content-Range')
       const count = parseContentRangeCount(contentRange)
-      // Drain the response body to avoid connection leaks.
-      // We only need the Content-Range header for the count, not the body.
-      await res.text().catch(() => {})
+      // HEAD responses have no body — Content-Range header is all we need.
       if (count === 0 && !contentRange) {
         console.warn(
           `[fetchSupabaseCount] Content-Range header missing for "${table}". ` +

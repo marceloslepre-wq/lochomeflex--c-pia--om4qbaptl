@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
-import { ChevronDown, Download, Eye, Play } from 'lucide-react'
+import { ChevronDown, Download, Eye, Play, RefreshCw } from 'lucide-react'
 import type { PreviewResult, CollectionMigrationResult } from '@/services/migration'
 
 interface Props {
@@ -13,6 +13,7 @@ interface Props {
   icon: ReactNode
   dependsOn: string[]
   preview?: PreviewResult
+  previewError?: string
   result?: CollectionMigrationResult
   isMigrating: boolean
   progress: { current: number; total: number }
@@ -27,6 +28,7 @@ export function MigrationCollectionCard({
   icon,
   dependsOn,
   preview,
+  previewError,
   result,
   isMigrating,
   progress,
@@ -64,7 +66,21 @@ export function MigrationCollectionCard({
                   </Badge>
                 )}
               </div>
-              {preview && !result && (
+              {previewError && !result && (
+                <div className="mt-0.5 space-y-1">
+                  <p className="text-sm text-red-600 dark:text-red-400">{previewError}</p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs"
+                    disabled={loadingPreview || isMigrating}
+                    onClick={onPreview}
+                  >
+                    <RefreshCw className="w-3 h-3 mr-1" /> Tentar novamente
+                  </Button>
+                </div>
+              )}
+              {preview && !result && !previewError && (
                 <p className="text-sm text-muted-foreground mt-0.5">
                   {preview.totalRecords} registros · {preview.newRecords} novos ·{' '}
                   {preview.duplicates} duplicados

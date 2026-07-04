@@ -51,6 +51,7 @@ export default function Migration() {
   const [progress, setProgress] = useState({ current: 0, total: 0 })
   const [confirmCol, setConfirmCol] = useState<string | null>(null)
   const [loadingPrev, setLoadingPrev] = useState<string | null>(null)
+  const [previewErrors, setPreviewErrors] = useState<Record<string, string | undefined>>({})
 
   if (!can('users:manage')) return <Navigate to="/dashboard" replace />
 
@@ -59,10 +60,21 @@ export default function Migration() {
     try {
       const preview = await previewCollection(config, col as any)
       setPreviews((p) => ({ ...p, [col]: preview }))
-      toast({
-        title: 'Pré-visualização',
-        description: `${preview.newRecords} novos, ${preview.duplicates} duplicados.`,
-      })
+      if (preview.warnings.length > 0 && preview.totalRecords === 0) {
+        const errMsg = preview.warnings[0]
+        setPreviewErrors((e) => ({ ...e, [col]: errMsg }))
+        toast({
+          title: 'Erro na pré-visualização',
+          description: errMsg,
+          variant: 'destructive',
+        })
+      } else {
+        setPreviewErrors((e) => ({ ...e, [col]: undefined }))
+        toast({
+          title: 'Pré-visualização',
+          description: `${preview.totalRecords} registros · ${preview.newRecords} novos · ${preview.duplicates} duplicados.`,
+        })
+      }
     } catch (err: any) {
       console.error('[Migration] Preview error for collection:', col, err)
       const desc = isTimeoutError(err)
@@ -184,6 +196,7 @@ export default function Migration() {
               icon={<Icon className="w-5 h-5 text-primary" />}
               dependsOn={col.dependsOn}
               preview={previews[col.id]}
+              previewError={previewErrors[col.id]}
               result={results[col.id]}
               isMigrating={migrating === col.id}
               progress={migrating === col.id ? progress : { current: 0, total: 0 }}
