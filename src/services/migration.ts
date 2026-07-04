@@ -67,18 +67,69 @@ export function createMigrationClient(config: MigrationConfig): SupabaseClient {
   return createClient(config.url, config.key)
 }
 
+function buildSupabaseHeaders(config: MigrationConfig): Record<string, string> {
+  return {
+    apikey: config.key,
+    Authorization: `Bearer ${config.key}`,
+    'Content-Type': 'application/json',
+  }
+}
+
+function buildSupabaseUrl(config: MigrationConfig, table: string): string {
+  const baseUrl = config.url.replace(/\/$/, '')
+  return `${baseUrl}/rest/v1/${table}`
+}
+
+function parseContentRangeCount(contentRange: string | null): number {
+  if (!contentRange) return 0
+  const match = contentRange.match(/\/(\d+)/)
+  return match ? parseInt(match[1], 10) : 0
+}
+
+function safeParseJson(text: string): any[] {
+  if (!text || !text.trim()) return []
+  try {
+    const parsed = JSON.parse(text)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit,
+  timeoutMs: number = 30000,
+): Promise<Response> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(url, { ...options, signal: controller.signal })
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
 export async function fetchSupabaseCount(config: MigrationConfig, table: string): Promise<number> {
-  const client = createMigrationClient(config)
-  const { count, error } = await client.from(table).select('*', { count: 'exact', head: true })
-  if (error) {
-    if (isTimeoutError(error)) {
+  const url = `${buildSupabaseUrl(config, table)}?select=*`
+  const headers = {
+    ...buildSupabaseHeaders(config),
+    Prefer: 'count=exact',
+  }
+  try {
+    const res = await fetchWithTimeout(url, { method: 'HEAD', headers })
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status} ${res.statusText}`)
+    }
+    return parseContentRangeCount(res.headers.get('Content-Range'))
+  } catch (err: any) {
+    if (err.name === 'AbortError' || isTimeoutError(err)) {
       throw new Error(
         `Timeout ao contar registros de "${table}". O banco de origem pode estar sobrecarregado. Tente novamente.`,
       )
     }
-    throw new Error(`Erro ao contar "${table}": ${error.message}`)
+    throw new Error(`Erro ao contar "${table}": ${err.message}`)
   }
-  return count || 0
 }
 
 export async function* fetchSupabaseTableBatches(
@@ -86,35 +137,46 @@ export async function* fetchSupabaseTableBatches(
   table: string,
   batchSize: number = MIGRATION_BATCH_SIZE,
 ): AsyncGenerator<{ records: any[]; batchIndex: number; totalSoFar: number }> {
-  const client = createMigrationClient(config)
+  const baseUrl = buildSupabaseUrl(config, table)
+  const headers = {
+    ...buildSupabaseHeaders(config),
+    Prefer: 'count=exact',
+  }
   let from = 0
   let batchIndex = 0
   let totalSoFar = 0
 
   while (true) {
-    const { data, error } = await client
-      .from(table)
-      .select('*')
-      .range(from, from + batchSize - 1)
+    try {
+      const res = await fetchWithTimeout(`${baseUrl}?select=*`, {
+        method: 'GET',
+        headers: {
+          ...headers,
+          Range: `${from}-${from + batchSize - 1}`,
+        },
+      })
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status} ${res.statusText}`)
+      }
+      const text = await res.text()
+      const data = safeParseJson(text)
+      if (data.length === 0) break
 
-    if (error) {
-      if (isTimeoutError(error)) {
+      totalSoFar += data.length
+      yield { records: data, batchIndex, totalSoFar }
+
+      if (data.length < batchSize) break
+      from += batchSize
+      batchIndex++
+    } catch (err: any) {
+      if (err.name === 'AbortError' || isTimeoutError(err)) {
         throw new Error(
           `Timeout ao buscar "${table}" (lote ${batchIndex + 1}, registros ${from + 1}–${from + batchSize}). ` +
             `O banco de origem demorou demais. Tente novamente ou reduza o tamanho do lote.`,
         )
       }
-      throw new Error(`Erro ao buscar "${table}": ${error.message}`)
+      throw new Error(`Erro ao buscar "${table}": ${err.message}`)
     }
-
-    if (!data || data.length === 0) break
-
-    totalSoFar += data.length
-    yield { records: data, batchIndex, totalSoFar }
-
-    if (data.length < batchSize) break
-    from += batchSize
-    batchIndex++
   }
 }
 
