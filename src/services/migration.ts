@@ -124,9 +124,13 @@ export function safeJsonParse(text: string, fallback: any = null): any {
 
 async function extractResponseError(
   res: Response,
+  skipBody: boolean = false,
 ): Promise<{ code: string | null; message: string }> {
   let code: string | null = null
   let message = `HTTP ${res.status} ${res.statusText}`
+  if (skipBody) {
+    return { code, message }
+  }
   try {
     const text = await res.text()
     if (text && text.trim()) {
@@ -158,10 +162,11 @@ async function fetchWithTimeout(
 ): Promise<Response> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), timeoutMs)
+  const isHead = (options.method || 'GET').toUpperCase() === 'HEAD'
   try {
     const res = await fetch(url, { ...options, signal: controller.signal })
     if (!res.ok) {
-      const { code, message } = await extractResponseError(res)
+      const { code, message } = await extractResponseError(res, isHead)
       const error: any = new Error(message)
       if (code) error.code = code
       throw error
@@ -169,7 +174,9 @@ async function fetchWithTimeout(
     return res
   } catch (err: any) {
     if (err.name === 'AbortError') {
-      throw err
+      throw new Error(
+        `Timeout na requisição para "${url}". O servidor demorou demais para responder.`,
+      )
     }
     throw err
   } finally {
@@ -249,7 +256,12 @@ export async function* fetchSupabaseTableBatches(
             Range: `${from}-${from + currentBatchSize - 1}`,
           },
         })
-        const text = await res.text()
+        let text = ''
+        try {
+          text = await res.text()
+        } catch {
+          text = ''
+        }
         const data = safeParseJson(text)
         records = data
         break
