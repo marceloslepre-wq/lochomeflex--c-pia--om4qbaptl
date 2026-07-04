@@ -27,25 +27,6 @@ import { PbAuthProvider } from '@/hooks/use-pb-auth'
 import SkipCloudInventory from './pages/SkipCloudInventory'
 import Billing from './pages/Billing'
 import Chat from './pages/Chat'
-import { useEffect } from 'react'
-import { supabase } from '@/lib/supabase/client'
-
-const OverdueChecker = () => {
-  useEffect(() => {
-    const checkOverdue = async () => {
-      if (!supabase) return
-      try {
-        await supabase.rpc('update_overdue_rentals')
-      } catch (error) {
-        console.error('Erro ao atualizar locações atrasadas:', error)
-      }
-    }
-
-    // Run once on app initialization
-    checkOverdue()
-  }, [])
-  return null
-}
 
 const App = () => (
   <BrowserRouter future={{ v7_startTransition: false, v7_relativeSplatPath: false }}>
@@ -53,7 +34,6 @@ const App = () => (
       <PbAuthProvider>
         <StoreProvider>
           <TooltipProvider>
-            <OverdueChecker />
             <Toaster />
             <Sonner />
             <Routes>

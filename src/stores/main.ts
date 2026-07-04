@@ -1,8 +1,16 @@
-import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react'
-import { supabase } from '@/lib/supabase/client'
-import { PermissionKey } from '@/hooks/use-permissions'
+import React, {
+  createContext,
+  useContext,
+  useState,
+  ReactNode,
+  useEffect,
+  useCallback,
+} from 'react'
+import pb from '@/lib/pocketbase/client'
 import { useAuth } from '@/hooks/use-auth'
+import { useRealtime } from '@/hooks/use-realtime'
 import { customerService, Customer } from '@/services/customers'
+import { PermissionKey } from '@/hooks/use-permissions'
 
 export type Asset = {
   id: string
@@ -93,6 +101,15 @@ export type Settings = {
   categories?: string[]
 }
 
+export type Billing = {
+  id: string
+  rentalId: string
+  amount: number
+  dueDate: string
+  status: 'unpaid' | 'paid' | 'overdue'
+  paymentMethod?: string
+}
+
 interface MainStore {
   currentUser: User | null
   setCurrentUser: (user: User | null) => void
@@ -101,6 +118,7 @@ interface MainStore {
   inventory: InventoryItem[]
   customers: Customer[]
   rentals: Rental[]
+  billing: Billing[]
   users: User[]
   settings: Settings
   addRental: (rental: Rental) => Promise<Rental | null>
@@ -117,11 +135,118 @@ interface MainStore {
   updateUser: (id: string, data: Partial<User>) => void
   deleteUser: (id: string) => void
   refreshCustomers: () => void
+  refreshInventory: () => Promise<void>
+  refreshRentals: () => Promise<void>
+  refreshBilling: () => Promise<void>
   deleteRental: (id: string) => Promise<void>
   loadItemAssets: (id: string) => Promise<Asset[]>
 }
 
 const StoreContext = createContext<MainStore | null>(null)
+
+const PB_URL = import.meta.env.VITE_POCKETBASE_URL as string
+const pbReady = !!PB_URL && PB_URL.trim() !== ''
+
+const getPbFileUrl = (record: any, fieldName: string): string | undefined => {
+  const filename = record[fieldName]
+  if (!filename || !record.collectionId) return undefined
+  return `${PB_URL}/api/files/${record.collectionId}/${record.id}/${filename}`
+}
+
+const mapInventoryStatusFromPb = (status: string): InventoryItem['conditionStatus'] => {
+  switch (status) {
+    case 'available':
+      return 'Disponível'
+    case 'rented':
+      return 'Esgotado'
+    case 'maintenance':
+      return 'Manutenção'
+    case 'lost':
+      return 'Indisponível'
+    default:
+      return 'Disponível'
+  }
+}
+
+const mapInventoryStatusToPb = (status: InventoryItem['conditionStatus']): string => {
+  switch (status) {
+    case 'Disponível':
+      return 'available'
+    case 'Manutenção':
+      return 'maintenance'
+    case 'Indisponível':
+      return 'lost'
+    case 'Esgotado':
+      return 'rented'
+    default:
+      return 'available'
+  }
+}
+
+const mapRentalStatusFromPb = (status: string): Rental['status'] => {
+  switch (status) {
+    case 'active':
+      return 'Ativo'
+    case 'completed':
+      return 'Devolvido'
+    case 'cancelled':
+      return 'Cancelado'
+    default:
+      return 'Ativo'
+  }
+}
+
+const mapRentalStatusToPb = (status: Rental['status']): string => {
+  switch (status) {
+    case 'Ativo':
+      return 'active'
+    case 'Atrasado':
+      return 'active'
+    case 'Devolvido':
+      return 'completed'
+    case 'Cancelado':
+      return 'cancelled'
+    default:
+      return 'active'
+  }
+}
+
+const mapInventoryFromPb = (record: any): InventoryItem => ({
+  id: record.id,
+  code: record.sku || '',
+  name: record.name || '',
+  category: record.category || '',
+  description: record.description || '',
+  totalQty: 1,
+  availableQty: record.status === 'available' ? 1 : 0,
+  rentedQty: record.status === 'rented' ? 1 : 0,
+  conditionStatus: mapInventoryStatusFromPb(record.status),
+  image: getPbFileUrl(record, 'image'),
+  dailyPrice: Number(record.daily_rate) || 0,
+  monthlyPrice: 0,
+  salePrice: 0,
+})
+
+const mapRentalFromPb = (record: any): Rental => ({
+  id: record.id,
+  customerId: record.customer || '',
+  items: Array.isArray(record.items)
+    ? record.items.map((id: string) => ({ itemId: id, qty: 1 }))
+    : [],
+  startDate: record.start_date || '',
+  expectedReturnDate: record.end_date || '',
+  status: mapRentalStatusFromPb(record.status),
+  total: Number(record.total_price) || 0,
+})
+
+const mapBillingFromPb = (record: any): Billing => ({
+  id: record.id,
+  rentalId: record.rental || '',
+  amount: Number(record.amount) || 0,
+  dueDate: record.due_date || '',
+  status: (record.status as Billing['status']) || 'unpaid',
+  paymentMethod: record.payment_method || '',
+})
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth()
@@ -130,8 +255,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [inventory, setInventory] = useState<InventoryItem[]>([])
   const [customers, setCustomers] = useState<Customer[]>([])
   const [rentals, setRentals] = useState<Rental[]>([])
+  const [billing, setBilling] = useState<Billing[]>([])
   const [users, setUsers] = useState<User[]>([])
-  const [settingsId, setSettingsId] = useState<string | null>(null)
   const [settings, setSettings] = useState<Settings>({
     primaryColor: '#1e40af',
     logoUrl: null,
@@ -146,242 +271,161 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     categories: ['Ferramentas', 'Equipamentos Pesados', 'Acessórios', 'Geral'],
   })
 
-  const refreshCustomers = () => {
-    customerService
-      .getCustomers()
-      .then(setCustomers)
-      .catch((err) => console.error('Failed to fetch customers:', err))
-  }
+  const refreshCustomers = useCallback(() => {
+    if (!pbReady)
+      return customerService
+        .getCustomers()
+        .then(setCustomers)
+        .catch((err) => console.error('Failed to fetch customers:', err))
+  }, [])
 
-  const loadItemAssets = async (id: string): Promise<Asset[]> => {
+  const refreshInventory = useCallback(async () => {
+    if (!pbReady) return
     try {
-      if (!supabase) return []
-      const { data, error } = await supabase.from('patrimonio').select('*').eq('inventory_id', id)
-
-      if (error) throw error
-
-      const fetchedAssets: Asset[] = (data || []).map((p: any) => ({
-        id: p.id,
-        assetNumber: p.numero_patrimonio,
-        conditionStatus:
-          p.estado === 'novo' || p.estado === 'bom'
-            ? 'Disponível'
-            : p.estado === 'regular'
-              ? 'Manutenção'
-              : 'Indisponível',
-      }))
-
-      setInventory((prev) => prev.map((i) => (i.id === id ? { ...i, assets: fetchedAssets } : i)))
-
-      return fetchedAssets
+      const records = await pb.collection('inventory').getFullList({ sort: '-created' })
+      setInventory(records.map(mapInventoryFromPb))
     } catch (err) {
-      console.error('Error fetching assets:', err)
-      return []
+      console.error('Failed to fetch inventory:', err)
     }
-  }
+  }, [])
+
+  const refreshRentals = useCallback(async () => {
+    if (!pbReady) return
+    try {
+      const records = await pb.collection('rentals').getFullList({
+        sort: '-created',
+        expand: 'customer,items',
+      })
+      setRentals(records.map(mapRentalFromPb))
+    } catch (err) {
+      console.error('Failed to fetch rentals:', err)
+    }
+  }, [])
+
+  const refreshBilling = useCallback(async () => {
+    if (!pbReady) return
+    try {
+      const records = await pb.collection('billing').getFullList({
+        sort: '-created',
+        expand: 'rental.customer',
+      })
+      setBilling(records.map(mapBillingFromPb))
+    } catch (err) {
+      console.error('Failed to fetch billing:', err)
+    }
+  }, [])
 
   useEffect(() => {
     if (!user) {
       setInventory([])
       setCustomers([])
       setRentals([])
+      setBilling([])
       setUsers([])
       setCurrentUser(null)
       return
     }
 
-    if (!supabase) {
-      console.warn(
-        'Supabase client is not initialized — skipping data load and realtime subscription.',
-      )
-      refreshCustomers()
+    if (!pbReady) {
+      console.warn('PocketBase URL is not configured — data will not load.')
       return
     }
 
-    const loadData = async () => {
-      try {
-        const [
-          { data: invData, error: invError },
-          { data: setData, error: setError },
-          { data: profData, error: profError },
-          { data: rentData, error: rentError },
-        ] = await Promise.all([
-          supabase
-            .from('inventory')
-            .select(
-              'id, code, name, category, description, total_qty, available_qty, rented_qty, condition_status, image, monthly_price, daily_price, sale_price',
-            )
-            .order('created_at', { ascending: false }),
-          supabase.from('settings').select('*').limit(1).maybeSingle(),
-          supabase.from('profiles').select('*').order('created_at', { ascending: false }),
-          supabase.from('rentals').select('*').order('created_at', { ascending: false }),
-        ])
-
-        if (invError) console.error('Error fetching inventory:', invError)
-        if (invData) {
-          setInventory(
-            invData.map((row: any) => ({
-              id: row.id,
-              code: row.code,
-              name: row.name,
-              category: row.category,
-              description: row.description,
-              totalQty: row.total_qty,
-              availableQty: row.available_qty,
-              rentedQty: row.rented_qty,
-              conditionStatus: row.condition_status as any,
-              image: row.image,
-              assets: row.assets || [],
-              monthlyPrice: Number(row.monthly_price) || 0,
-              dailyPrice: Number(row.daily_price) || 0,
-              salePrice: Number(row.sale_price) || 0,
-            })),
-          )
-        }
-
-        if (setError) console.error('Error fetching settings:', setError)
-        if (setData) {
-          setSettingsId(setData.id)
-          setSettings({
-            primaryColor: setData.primary_color || '#1e40af',
-            logoUrl: setData.logo_url,
-            contractFileName: setData.contract_file_name,
-            contractTemplateHtml: setData.contract_template_html,
-            lateFeeType: (setData.late_fee_type as any) || 'daily',
-            lateFeeValue: Number(setData.late_fee_value) || 2,
-            companyName: setData.company_name || '',
-            companyDocument: setData.company_document || '',
-            companyAddress: setData.company_address || '',
-            categories: setData.categories || [
-              'Ferramentas',
-              'Equipamentos Pesados',
-              'Acessórios',
-              'Geral',
-            ],
-            locations: setData.locations || [],
-          })
-        }
-
-        if (profError) console.error('Error fetching profiles:', profError)
-        if (profData) {
-          const mappedUsers = profData.map((row: any) => ({
-            id: row.id,
-            auth_user_id: row.auth_user_id,
-            name: row.name,
-            email: row.email,
-            role: row.role,
-            active: row.active,
-            permissions: row.permissions || [],
-          }))
-          setUsers(mappedUsers)
-          const myProfile = mappedUsers.find((u) => u.email === user.email)
-          if (myProfile) setCurrentUser(myProfile)
-        }
-
-        if (rentError) console.error('Error fetching rentals:', rentError)
-        if (rentData) {
-          setRentals(
-            rentData.map((row: any) => ({
-              id: row.id,
-              customerId: row.customer_id,
-              startDate: row.start_date,
-              expectedReturnDate: row.expected_return_date,
-              actualReturnDate: row.actual_return_date,
-              status: row.status as any,
-              total: Number(row.total),
-              customContractText: row.custom_contract_text,
-              customContractHtml: row.custom_contract_html,
-              userId: row.user_id,
-              pickupLocationId: row.pickup_location_id,
-              items: row.items || [],
-              contractNumber: row.contract_number,
-            })),
-          )
-        }
-
-        refreshCustomers()
-      } catch (err) {
-        console.error('Error in loadData:', err)
+    if (pb.authStore.isValid && pb.authStore.record) {
+      const record = pb.authStore.record as any
+      const mappedUser: User = {
+        id: record.id,
+        name: record.name || record.email || '',
+        email: record.email || '',
+        role: record.role || 'Usuario',
+        active: true,
+        permissions: [],
       }
+      setCurrentUser(mappedUser)
+      setUsers([mappedUser])
     }
 
-    loadData()
+    refreshCustomers()
+    refreshInventory()
+    refreshRentals()
+    refreshBilling()
+  }, [user?.id, refreshCustomers, refreshInventory, refreshRentals, refreshBilling])
 
-    const customersSubscription = supabase
-      .channel('public:customers')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'customers' }, () => {
-        refreshCustomers()
-      })
-      .subscribe()
-
-    return () => {
-      customersSubscription.unsubscribe()
-    }
-  }, [user?.id])
+  useRealtime(
+    'inventory',
+    () => {
+      refreshInventory()
+    },
+    !!user && pbReady,
+  )
+  useRealtime(
+    'rentals',
+    () => {
+      refreshRentals()
+    },
+    !!user && pbReady,
+  )
+  useRealtime(
+    'customers',
+    () => {
+      refreshCustomers()
+    },
+    !!user && pbReady,
+  )
+  useRealtime(
+    'billing',
+    () => {
+      refreshBilling()
+    },
+    !!user && pbReady,
+  )
 
   const addRental = async (rental: Rental): Promise<Rental | null> => {
     const tempId = rental.id || Math.random().toString()
-    setRentals((prev) => [rental, ...prev])
-
+    setRentals((prev) => [{ ...rental, id: tempId }, ...prev])
     setInventory((prev) =>
       prev.map((item) => {
         const rented = rental.items.find((ri) => ri.itemId === item.id)
         if (rented) {
           return {
             ...item,
-            availableQty: item.availableQty - rented.qty,
+            availableQty: Math.max(0, item.availableQty - rented.qty),
             rentedQty: item.rentedQty + rented.qty,
           }
         }
         return item
       }),
     )
-
-    if (!supabase) return rental
-
-    const { data } = await supabase
-      .from('rentals')
-      .insert({
-        customer_id: rental.customerId,
+    if (!pbReady) return rental
+    try {
+      const record = await pb.collection('rentals').create({
+        customer: rental.customerId,
+        items: rental.items.map((ri) => ri.itemId),
         start_date: rental.startDate,
-        expected_return_date: rental.expectedReturnDate,
-        status: rental.status,
-        total: rental.total,
-        custom_contract_text: rental.customContractText,
-        custom_contract_html: rental.customContractHtml,
-        user_id: rental.userId,
-        pickup_location_id: rental.pickupLocationId,
-        items: rental.items,
+        end_date: rental.expectedReturnDate,
+        total_price: rental.total,
+        status: mapRentalStatusToPb(rental.status),
       })
-      .select()
-      .single()
-
-    let newRental = rental
-    if (data) {
-      newRental = { ...rental, id: data.id, contractNumber: data.contract_number }
+      const newRental = { ...rental, id: record.id }
       setRentals((prev) => prev.map((r) => (r.id === tempId || r.id === rental.id ? newRental : r)))
-    }
-
-    for (const rentItem of rental.items) {
-      const inv = inventory.find((i) => i.id === rentItem.itemId)
-      if (inv) {
-        await supabase
-          .from('inventory')
-          .update({
-            available_qty: inv.availableQty - rentItem.qty,
-            rented_qty: inv.rentedQty + rentItem.qty,
-          })
-          .eq('id', inv.id)
+      for (const rentItem of rental.items) {
+        try {
+          await pb.collection('inventory').update(rentItem.itemId, { status: 'rented' })
+        } catch (err) {
+          console.error('Failed to update inventory status:', err)
+        }
       }
+      return newRental
+    } catch (err) {
+      console.error('Failed to create rental:', err)
+      setRentals((prev) => prev.filter((r) => r.id !== tempId))
+      return null
     }
-
-    return newRental
   }
 
   const returnRental = async (rentalId: string, actualDate: string) => {
     const rental = rentals.find((r) => r.id === rentalId)
     if (!rental) return
-
     setRentals((prev) =>
       prev.map((r) =>
         r.id === rentalId ? { ...r, status: 'Devolvido', actualReturnDate: actualDate } : r,
@@ -394,40 +438,31 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           return {
             ...item,
             availableQty: item.availableQty + rented.qty,
-            rentedQty: item.rentedQty - rented.qty,
+            rentedQty: Math.max(0, item.rentedQty - rented.qty),
           }
         }
         return item
       }),
     )
-
-    if (!supabase) return
-
-    await supabase
-      .from('rentals')
-      .update({ status: 'Devolvido', actual_return_date: actualDate })
-      .eq('id', rentalId)
-
-    for (const rentItem of rental.items) {
-      const inv = inventory.find((i) => i.id === rentItem.itemId)
-      if (inv) {
-        await supabase
-          .from('inventory')
-          .update({
-            available_qty: inv.availableQty + rentItem.qty,
-            rented_qty: inv.rentedQty - rentItem.qty,
-          })
-          .eq('id', inv.id)
+    if (!pbReady) return
+    try {
+      await pb.collection('rentals').update(rentalId, { status: 'completed' })
+      for (const rentItem of rental.items) {
+        try {
+          await pb.collection('inventory').update(rentItem.itemId, { status: 'available' })
+        } catch (err) {
+          console.error('Failed to update inventory status:', err)
+        }
       }
+    } catch (err) {
+      console.error('Failed to return rental:', err)
     }
   }
 
   const deleteRental = async (id: string) => {
     const rental = rentals.find((r) => r.id === id)
     if (!rental) return
-
     setRentals((prev) => prev.filter((r) => r.id !== id))
-
     if (rental.status !== 'Devolvido') {
       setInventory((prev) =>
         prev.map((item) => {
@@ -436,203 +471,179 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             return {
               ...item,
               availableQty: item.availableQty + rented.qty,
-              rentedQty: item.rentedQty - rented.qty,
+              rentedQty: Math.max(0, item.rentedQty - rented.qty),
             }
           }
           return item
         }),
       )
     }
-
-    if (!supabase) return
-
-    await supabase.from('rentals').delete().eq('id', id)
-
-    if (rental.status !== 'Devolvido') {
-      for (const rentItem of rental.items) {
-        const inv = inventory.find((i) => i.id === rentItem.itemId)
-        if (inv) {
-          await supabase
-            .from('inventory')
-            .update({
-              available_qty: inv.availableQty + rentItem.qty,
-              rented_qty: inv.rentedQty - rentItem.qty,
-            })
-            .eq('id', inv.id)
+    if (!pbReady) return
+    try {
+      await pb.collection('rentals').delete(id)
+      if (rental.status !== 'Devolvido') {
+        for (const rentItem of rental.items) {
+          try {
+            await pb.collection('inventory').update(rentItem.itemId, { status: 'available' })
+          } catch (err) {
+            console.error('Failed to update inventory status:', err)
+          }
         }
       }
+    } catch (err) {
+      console.error('Failed to delete rental:', err)
     }
   }
 
   const updateRental = async (id: string, updateData: Partial<Rental>) => {
     setRentals((prev) => prev.map((r) => (r.id === id ? { ...r, ...updateData } : r)))
-
-    if (!supabase) return
-
-    const dbUpdate: any = {}
-    if (updateData.status) dbUpdate.status = updateData.status
-    if (updateData.actualReturnDate) dbUpdate.actual_return_date = updateData.actualReturnDate
-    if (updateData.expectedReturnDate) dbUpdate.expected_return_date = updateData.expectedReturnDate
-    if (updateData.startDate) dbUpdate.start_date = updateData.startDate
-
-    await supabase.from('rentals').update(dbUpdate).eq('id', id)
+    if (!pbReady) return
+    const pbData: Record<string, any> = {}
+    if (updateData.status) pbData.status = mapRentalStatusToPb(updateData.status)
+    if (updateData.expectedReturnDate) pbData.end_date = updateData.expectedReturnDate
+    if (updateData.startDate) pbData.start_date = updateData.startDate
+    if (updateData.total !== undefined) pbData.total_price = updateData.total
+    if (updateData.customerId) pbData.customer = updateData.customerId
+    try {
+      await pb.collection('rentals').update(id, pbData)
+    } catch (err) {
+      console.error('Failed to update rental:', err)
+    }
   }
 
   const addInventoryItem = async (item: InventoryItem) => {
     const tempId = item.id || Math.random().toString()
     setInventory((prev) => [{ ...item, id: tempId }, ...prev])
-
-    if (!supabase) return
-
-    const { data } = await supabase
-      .from('inventory')
-      .insert({
-        code: item.code,
+    if (!pbReady) return
+    try {
+      const record = await pb.collection('inventory').create({
         name: item.name,
+        description: item.description || '',
+        sku: item.code,
         category: item.category,
-        description: item.description,
-        total_qty: item.totalQty,
-        available_qty: item.availableQty,
-        rented_qty: item.rentedQty,
-        condition_status: item.conditionStatus,
-        image: item.image,
-        assets: item.assets || [],
-        monthly_price: item.monthlyPrice,
-        daily_price: item.dailyPrice,
-        sale_price: item.salePrice,
+        daily_rate: item.dailyPrice || 0,
+        status: mapInventoryStatusToPb(item.conditionStatus),
       })
-      .select()
-      .single()
-
-    if (data) {
       setInventory((prev) =>
-        prev.map((i) => (i.id === tempId || i.id === item.id ? { ...i, id: data.id } : i)),
+        prev.map((i) => (i.id === tempId || i.id === item.id ? { ...i, id: record.id } : i)),
       )
+    } catch (err) {
+      console.error('Failed to create inventory item:', err)
+      setInventory((prev) => prev.filter((i) => i.id !== tempId))
     }
   }
 
   const updateInventoryItem = async (id: string, data: Partial<InventoryItem>) => {
     setInventory((prev) => prev.map((i) => (i.id === id ? { ...i, ...data } : i)))
-
-    if (!supabase) return
-
-    const dbUpdate: any = {}
-    if (data.code) dbUpdate.code = data.code
-    if (data.name) dbUpdate.name = data.name
-    if (data.category) dbUpdate.category = data.category
-    if (data.description !== undefined) dbUpdate.description = data.description
-    if (data.totalQty !== undefined) dbUpdate.total_qty = data.totalQty
-    if (data.availableQty !== undefined) dbUpdate.available_qty = data.availableQty
-    if (data.rentedQty !== undefined) dbUpdate.rented_qty = data.rentedQty
-    if (data.conditionStatus) dbUpdate.condition_status = data.conditionStatus
-    if (data.image !== undefined) dbUpdate.image = data.image
-    if (data.assets !== undefined) dbUpdate.assets = data.assets
-    if (data.monthlyPrice !== undefined) dbUpdate.monthly_price = data.monthlyPrice
-    if (data.dailyPrice !== undefined) dbUpdate.daily_price = data.dailyPrice
-    if (data.salePrice !== undefined) dbUpdate.sale_price = data.salePrice
-
-    await supabase.from('inventory').update(dbUpdate).eq('id', id)
+    if (!pbReady) return
+    const pbData: Record<string, any> = {}
+    if (data.name !== undefined) pbData.name = data.name
+    if (data.description !== undefined) pbData.description = data.description
+    if (data.code !== undefined) pbData.sku = data.code
+    if (data.category !== undefined) pbData.category = data.category
+    if (data.dailyPrice !== undefined) pbData.daily_rate = data.dailyPrice
+    if (data.conditionStatus !== undefined)
+      pbData.status = mapInventoryStatusToPb(data.conditionStatus)
+    try {
+      await pb.collection('inventory').update(id, pbData)
+    } catch (err) {
+      console.error('Failed to update inventory item:', err)
+    }
   }
 
   const deleteInventoryItem = async (id: string) => {
     setInventory((prev) => prev.filter((i) => i.id !== id))
-    if (!supabase) return
-    await supabase.from('inventory').delete().eq('id', id)
+    if (!pbReady) return
+    try {
+      await pb.collection('inventory').delete(id)
+    } catch (err) {
+      console.error('Failed to delete inventory item:', err)
+    }
   }
 
   const addCustomer = async (c: Customer) => {
     setCustomers((prev) => [c, ...prev])
-    await customerService.createCustomer(c)
-    refreshCustomers()
+    if (!pbReady) return
+    try {
+      await customerService.createCustomer(c)
+      refreshCustomers()
+    } catch (err) {
+      console.error('Failed to create customer:', err)
+      setCustomers((prev) => prev.filter((cust) => cust.id !== c.id))
+    }
   }
 
   const updateCustomer = async (id: string, data: Partial<Customer>) => {
     setCustomers((prev) => prev.map((c) => (c.id === id ? { ...c, ...data } : c)))
-    await customerService.updateCustomer(id, data)
-    refreshCustomers()
+    if (!pbReady) return
+    try {
+      await customerService.updateCustomer(id, data)
+      refreshCustomers()
+    } catch (err) {
+      console.error('Failed to update customer:', err)
+    }
   }
 
   const deleteCustomer = async (id: string) => {
     setCustomers((prev) => prev.filter((c) => c.id !== id))
-    await customerService.deleteCustomer(id)
-    refreshCustomers()
+    if (!pbReady) return
+    try {
+      await customerService.deleteCustomer(id)
+    } catch (err) {
+      console.error('Failed to delete customer:', err)
+    }
   }
 
   const updateSettings = async (data: Partial<Settings>) => {
     setSettings((prev) => ({ ...prev, ...data }))
-
-    if (!supabase) return
-
-    const updateData: any = {}
-    if ('primaryColor' in data) updateData.primary_color = data.primaryColor
-    if ('logoUrl' in data) updateData.logo_url = data.logoUrl
-    if ('contractFileName' in data) updateData.contract_file_name = data.contractFileName
-    if ('contractTemplateHtml' in data)
-      updateData.contract_template_html = data.contractTemplateHtml
-    if ('lateFeeType' in data) updateData.late_fee_type = data.lateFeeType
-    if ('lateFeeValue' in data) updateData.late_fee_value = data.lateFeeValue
-    if ('companyName' in data) updateData.company_name = data.companyName
-    if ('companyDocument' in data) updateData.company_document = data.companyDocument
-    if ('companyAddress' in data) updateData.company_address = data.companyAddress
-    if ('categories' in data) updateData.categories = data.categories
-    if ('locations' in data) updateData.locations = data.locations
-
-    if (settingsId) {
-      await supabase.from('settings').update(updateData).eq('id', settingsId)
-    } else {
-      const { data: inserted } = await supabase
-        .from('settings')
-        .insert(updateData)
-        .select()
-        .single()
-      if (inserted) setSettingsId(inserted.id)
-    }
   }
 
   const addUser = async (newUser: User) => {
     const tempId = newUser.id || Math.random().toString()
     setUsers((prev) => [...prev, { ...newUser, id: tempId }])
-
-    if (!supabase) return
-
-    const { data } = await supabase
-      .from('profiles')
-      .insert({
+    if (!pbReady) return
+    try {
+      const record = await pb.collection('users').create({
         name: newUser.name,
         email: newUser.email,
         role: newUser.role,
-        active: newUser.active,
-        permissions: newUser.permissions,
+        password: 'Skip@Pass',
+        passwordConfirm: 'Skip@Pass',
       })
-      .select()
-      .single()
-
-    if (data) {
       setUsers((prev) =>
-        prev.map((u) => (u.id === tempId || u.id === newUser.id ? { ...u, id: data.id } : u)),
+        prev.map((u) => (u.id === tempId || u.id === newUser.id ? { ...u, id: record.id } : u)),
       )
+    } catch (err) {
+      console.error('Failed to create user:', err)
+      setUsers((prev) => prev.filter((u) => u.id !== tempId))
     }
   }
 
   const updateUser = async (id: string, data: Partial<User>) => {
     setUsers((prev) => prev.map((u) => (u.id === id ? { ...u, ...data } : u)))
-    if (!supabase) return
-    await supabase
-      .from('profiles')
-      .update({
-        name: data.name,
-        email: data.email,
-        role: data.role,
-        active: data.active,
-        permissions: data.permissions,
-      })
-      .eq('id', id)
+    if (!pbReady) return
+    try {
+      const pbData: Record<string, any> = {}
+      if (data.name !== undefined) pbData.name = data.name
+      if (data.role !== undefined) pbData.role = data.role
+      await pb.collection('users').update(id, pbData)
+    } catch (err) {
+      console.error('Failed to update user:', err)
+    }
   }
 
   const deleteUser = async (id: string) => {
     setUsers((prev) => prev.filter((u) => u.id !== id))
-    if (!supabase) return
-    await supabase.from('profiles').delete().eq('id', id)
+    if (!pbReady) return
+    try {
+      await pb.collection('users').delete(id)
+    } catch (err) {
+      console.error('Failed to delete user:', err)
+    }
+  }
+
+  const loadItemAssets = async (_id: string): Promise<Asset[]> => {
+    return []
   }
 
   return React.createElement(
@@ -646,6 +657,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         inventory,
         customers,
         rentals,
+        billing,
         users,
         settings,
         addRental,
@@ -662,6 +674,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         updateUser,
         deleteUser,
         refreshCustomers,
+        refreshInventory,
+        refreshRentals,
+        refreshBilling,
         deleteRental,
         loadItemAssets,
       },
