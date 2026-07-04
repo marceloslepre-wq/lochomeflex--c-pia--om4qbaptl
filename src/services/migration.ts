@@ -1,7 +1,11 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import pb from '@/lib/pocketbase/client'
 
-export const MIGRATION_BATCH_SIZE = 100
+export const MIGRATION_BATCH_SIZE = 25
+
+const MAX_RETRIES = 3
+const RETRY_DELAY_MS = 1000
+const MIN_BATCH_SIZE = 5
 
 export interface MigrationConfig {
   url: string
@@ -63,6 +67,11 @@ export function isTimeoutError(err: any): boolean {
   )
 }
 
+export function isStatementTimeout(err: any): boolean {
+  const code = err?.code || err?.response?.code
+  return code === '57014'
+}
+
 export function createMigrationClient(config: MigrationConfig): SupabaseClient {
   return createClient(config.url, config.key)
 }
@@ -96,6 +105,35 @@ function safeParseJson(text: string): any[] {
   }
 }
 
+async function extractResponseError(
+  res: Response,
+): Promise<{ code: string | null; message: string }> {
+  let code: string | null = null
+  let message = `HTTP ${res.status} ${res.statusText}`
+  try {
+    const text = await res.text()
+    if (text) {
+      try {
+        const body = JSON.parse(text)
+        code = body?.code || null
+        message = body?.message || body?.error || message
+      } catch {
+        if (text.toLowerCase().includes('57014') || text.toLowerCase().includes('timeout')) {
+          code = '57014'
+          message = text
+        }
+      }
+    }
+  } catch {
+    /* response body already consumed or unreadable */
+  }
+  return { code, message }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 async function fetchWithTimeout(
   url: string,
   options: RequestInit,
@@ -104,7 +142,19 @@ async function fetchWithTimeout(
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    return await fetch(url, { ...options, signal: controller.signal })
+    const res = await fetch(url, { ...options, signal: controller.signal })
+    if (!res.ok) {
+      const { code, message } = await extractResponseError(res)
+      const error: any = new Error(message)
+      if (code) error.code = code
+      throw error
+    }
+    return res
+  } catch (err: any) {
+    if (err.name === 'AbortError') {
+      throw err
+    }
+    throw err
   } finally {
     clearTimeout(timeout)
   }
@@ -116,20 +166,27 @@ export async function fetchSupabaseCount(config: MigrationConfig, table: string)
     ...buildSupabaseHeaders(config),
     Prefer: 'count=exact',
   }
-  try {
-    const res = await fetchWithTimeout(url, { method: 'HEAD', headers })
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status} ${res.statusText}`)
+
+  let lastError: any = null
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const res = await fetchWithTimeout(url, { method: 'HEAD', headers })
+      return parseContentRangeCount(res.headers.get('Content-Range'))
+    } catch (err: any) {
+      lastError = err
+      if (isStatementTimeout(err) || err.name === 'AbortError') {
+        if (attempt < MAX_RETRIES) {
+          await delay(RETRY_DELAY_MS * (attempt + 1))
+          continue
+        }
+        throw new Error(
+          `Timeout ao contar registros de "${table}". O banco de origem pode estar sobrecarregado. Tente novamente.`,
+        )
+      }
+      throw new Error(`Erro ao contar "${table}": ${err.message}`)
     }
-    return parseContentRangeCount(res.headers.get('Content-Range'))
-  } catch (err: any) {
-    if (err.name === 'AbortError' || isTimeoutError(err)) {
-      throw new Error(
-        `Timeout ao contar registros de "${table}". O banco de origem pode estar sobrecarregado. Tente novamente.`,
-      )
-    }
-    throw new Error(`Erro ao contar "${table}": ${err.message}`)
   }
+  throw new Error(`Erro ao contar "${table}": ${lastError?.message || 'unknown'}`)
 }
 
 export async function* fetchSupabaseTableBatches(
@@ -145,38 +202,65 @@ export async function* fetchSupabaseTableBatches(
   let from = 0
   let batchIndex = 0
   let totalSoFar = 0
+  let currentBatchSize = batchSize
 
   while (true) {
-    try {
-      const res = await fetchWithTimeout(`${baseUrl}?select=*`, {
-        method: 'GET',
-        headers: {
-          ...headers,
-          Range: `${from}-${from + batchSize - 1}`,
-        },
-      })
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status} ${res.statusText}`)
-      }
-      const text = await res.text()
-      const data = safeParseJson(text)
-      if (data.length === 0) break
+    let records: any[] | null = null
+    let lastError: any = null
 
-      totalSoFar += data.length
-      yield { records: data, batchIndex, totalSoFar }
-
-      if (data.length < batchSize) break
-      from += batchSize
-      batchIndex++
-    } catch (err: any) {
-      if (err.name === 'AbortError' || isTimeoutError(err)) {
-        throw new Error(
-          `Timeout ao buscar "${table}" (lote ${batchIndex + 1}, registros ${from + 1}–${from + batchSize}). ` +
-            `O banco de origem demorou demais. Tente novamente ou reduza o tamanho do lote.`,
-        )
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const res = await fetchWithTimeout(`${baseUrl}?select=*`, {
+          method: 'GET',
+          headers: {
+            ...headers,
+            Range: `${from}-${from + currentBatchSize - 1}`,
+          },
+        })
+        const text = await res.text()
+        const data = safeParseJson(text)
+        records = data
+        break
+      } catch (err: any) {
+        lastError = err
+        if (isStatementTimeout(err) || err.name === 'AbortError') {
+          if (attempt < MAX_RETRIES) {
+            if (currentBatchSize > MIN_BATCH_SIZE) {
+              currentBatchSize = Math.max(MIN_BATCH_SIZE, Math.floor(currentBatchSize / 2))
+            }
+            await delay(RETRY_DELAY_MS * (attempt + 1))
+            continue
+          }
+          throw new Error(
+            `Timeout ao buscar "${table}" (lote ${batchIndex + 1}, registros ${from + 1}–${from + currentBatchSize}). ` +
+              `O banco de origem demorou demais. Tente novamente ou reduza o tamanho do lote.`,
+          )
+        }
+        if (isTimeoutError(err)) {
+          if (attempt < MAX_RETRIES) {
+            await delay(RETRY_DELAY_MS * (attempt + 1))
+            continue
+          }
+          throw new Error(
+            `Timeout ao buscar "${table}" (lote ${batchIndex + 1}, registros ${from + 1}–${from + currentBatchSize}). ` +
+              `O banco de origem demorou demais. Tente novamente ou reduza o tamanho do lote.`,
+          )
+        }
+        throw new Error(`Erro ao buscar "${table}": ${err.message}`)
       }
-      throw new Error(`Erro ao buscar "${table}": ${err.message}`)
     }
+
+    if (records === null) {
+      throw new Error(`Erro ao buscar "${table}": ${lastError?.message || 'unknown'}`)
+    }
+    if (records.length === 0) break
+
+    totalSoFar += records.length
+    yield { records, batchIndex, totalSoFar }
+
+    if (records.length < currentBatchSize) break
+    from += currentBatchSize
+    batchIndex++
   }
 }
 
@@ -246,44 +330,70 @@ export async function previewCollection(
   const sourceTable =
     collection === 'contracts' || collection === 'billing' ? 'rentals' : collection
 
-  const totalRecords = await fetchSupabaseCount(config, sourceTable)
+  let totalRecords = 0
+  try {
+    totalRecords = await fetchSupabaseCount(config, sourceTable)
+  } catch (err: any) {
+    return {
+      collection,
+      totalRecords: 0,
+      newRecords: 0,
+      duplicates: 0,
+      invalid: 0,
+      warnings: [
+        isTimeoutError(err)
+          ? `Timeout ao contar registros: ${err.message}`
+          : `Erro ao contar registros: ${err.message}`,
+      ],
+    }
+  }
 
   let duplicates = 0
   let invalid = 0
   const warnings: string[] = []
 
-  if (collection === 'customers') {
-    const existing = await pb.collection('customers').getFullList()
-    const emails = new Set(existing.map((r: any) => r.email).filter(Boolean))
-    for await (const { records } of fetchSupabaseTableBatches(config, sourceTable)) {
-      for (const r of records) {
-        if (r.email && emails.has(r.email)) duplicates++
-        if (warnings.length < MAX_WARNINGS && !r.name) {
-          invalid++
-          warnings.push(`Registro ${r.id || '?'} sem nome`)
-        }
-      }
-    }
-  } else if (collection === 'inventory') {
-    const existing = await pb.collection('inventory').getFullList()
-    const skus = new Set(existing.map((r: any) => r.sku).filter(Boolean))
-    for await (const { records } of fetchSupabaseTableBatches(config, sourceTable)) {
-      for (const r of records) {
-        if (r.code && skus.has(r.code)) duplicates++
-        if (warnings.length < MAX_WARNINGS) {
-          if (!r.name) {
+  try {
+    if (collection === 'customers') {
+      const existing = await pb.collection('customers').getFullList()
+      const emails = new Set(existing.map((r: any) => r.email).filter(Boolean))
+      for await (const { records } of fetchSupabaseTableBatches(config, sourceTable)) {
+        for (const r of records) {
+          if (r.email && emails.has(r.email)) duplicates++
+          if (warnings.length < MAX_WARNINGS && !r.name) {
             invalid++
             warnings.push(`Registro ${r.id || '?'} sem nome`)
           }
-          if (r.daily_price == null) {
-            invalid++
-            warnings.push(`Registro ${r.id || '?'} sem diária`)
+        }
+      }
+    } else if (collection === 'inventory') {
+      const existing = await pb.collection('inventory').getFullList()
+      const skus = new Set(existing.map((r: any) => r.sku).filter(Boolean))
+      for await (const { records } of fetchSupabaseTableBatches(config, sourceTable)) {
+        for (const r of records) {
+          if (r.code && skus.has(r.code)) duplicates++
+          if (warnings.length < MAX_WARNINGS) {
+            if (!r.name) {
+              invalid++
+              warnings.push(`Registro ${r.id || '?'} sem nome`)
+            }
+            if (r.daily_price == null) {
+              invalid++
+              warnings.push(`Registro ${r.id || '?'} sem diária`)
+            }
           }
         }
       }
+    } else if (collection === 'rentals' || collection === 'contracts' || collection === 'billing') {
+      duplicates = (await pb.collection(collection).getFullList()).length
     }
-  } else if (collection === 'rentals' || collection === 'contracts' || collection === 'billing') {
-    duplicates = (await pb.collection(collection).getFullList()).length
+  } catch (err: any) {
+    if (warnings.length < MAX_WARNINGS) {
+      warnings.push(
+        isTimeoutError(err)
+          ? `Timeout ao buscar registros: ${err.message}`
+          : `Erro ao buscar registros: ${err.message}`,
+      )
+    }
   }
 
   return {
