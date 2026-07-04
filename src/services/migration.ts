@@ -195,11 +195,39 @@ export async function fetchSupabaseCount(config: MigrationConfig, table: string)
   let lastError: any = null
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
-      const res = await fetchWithTimeout(url, { method: 'HEAD', headers })
+      // Use GET instead of HEAD for broader API compatibility.
+      // The total count is extracted from the Content-Range response header,
+      // not from the response body.
+      const res = await fetchWithTimeout(url, { method: 'GET', headers })
       const contentRange = res.headers.get('Content-Range')
       const count = parseContentRangeCount(contentRange)
-      // HEAD responses have no body — Content-Range header is all we need.
-      if (count === 0 && !contentRange) {
+      // Consume the body to free resources without parsing it as JSON.
+      // Guard: only parse the body as a fallback when the header is missing,
+      // and only if the body is present and non-empty to prevent
+      // "Unexpected end of JSON input" errors on empty/204 responses.
+      if (count > 0) {
+        try {
+          await res.text()
+        } catch {
+          /* intentionally ignored */
+        }
+        return count
+      }
+      let bodyText = ''
+      try {
+        bodyText = await res.text()
+      } catch {
+        bodyText = ''
+      }
+      if (bodyText && bodyText.trim()) {
+        try {
+          const parsed = JSON.parse(bodyText)
+          if (Array.isArray(parsed)) return parsed.length
+        } catch {
+          // Body is not valid JSON — fall through
+        }
+      }
+      if (!contentRange) {
         console.warn(
           `[fetchSupabaseCount] Content-Range header missing for "${table}". ` +
             `The table may be empty or the API did not return a count.`,
@@ -409,6 +437,19 @@ export async function previewCollection(
   config: MigrationConfig,
   collection: MigrationCollectionId,
 ): Promise<PreviewResult> {
+  const url = (config.url || '').trim()
+  const key = (config.key || '').trim()
+  if (!url || !key) {
+    return {
+      collection,
+      totalRecords: 0,
+      newRecords: 0,
+      duplicates: 0,
+      invalid: 0,
+      warnings: ['Configuração do Supabase incompleta. Verifique a URL e a chave de acesso.'],
+    }
+  }
+  config = { ...config, url, key }
   const sourceTable =
     collection === 'contracts' || collection === 'billing'
       ? 'rentals'
