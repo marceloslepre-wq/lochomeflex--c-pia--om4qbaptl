@@ -15,6 +15,7 @@ import {
   mapBillingStatus,
   stringifyAddress,
   consolidatePhone,
+  safeJsonParse,
 } from '@/services/migration'
 
 type R = CollectionMigrationResult
@@ -43,6 +44,10 @@ async function runBatch<T>(
       else result.success++
     } catch (e: any) {
       result.errors++
+      console.error(
+        `[runBatch] Error processing record at index ${offset + i} in "${result.collection}":`,
+        e instanceof Error ? e.message : e,
+      )
       const fieldErrors = extractFieldErrors(e)
       const entry: MigrationErrorEntry = {
         index: offset + i,
@@ -170,7 +175,7 @@ export async function executeRentalsMigration(
         if (!custPbId) throw new Error('Cliente não encontrado no destino')
         let itemIds: string[] = []
         if (r.items) {
-          const items = typeof r.items === 'string' ? JSON.parse(r.items) : r.items
+          const items = typeof r.items === 'string' ? safeJsonParse(r.items, []) : r.items
           if (Array.isArray(items)) {
             itemIds = items
               .map((it: any) => {

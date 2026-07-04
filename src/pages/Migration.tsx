@@ -64,6 +64,7 @@ export default function Migration() {
         description: `${preview.newRecords} novos, ${preview.duplicates} duplicados.`,
       })
     } catch (err: any) {
+      console.error('[Migration] Preview error for collection:', col, err)
       const desc = isTimeoutError(err)
         ? 'Timeout ao buscar dados do banco de origem. Verifique a conexão ou tente novamente.'
         : err.message || 'Erro desconhecido'
@@ -91,6 +92,7 @@ export default function Migration() {
         description: `${result.success} bem-sucedidos, ${result.skipped} pulados (duplicados), ${result.errors} falhas.`,
       })
     } catch (err: any) {
+      console.error('[Migration] Migration error for collection:', col, err)
       const desc = isTimeoutError(err)
         ? 'Timeout ao buscar dados do banco de origem. A migração foi interrompida. Tente novamente.'
         : err.message || 'Erro desconhecido'

@@ -105,6 +105,16 @@ function safeParseJson(text: string): any[] {
   }
 }
 
+export function safeJsonParse(text: string, fallback: any = null): any {
+  if (!text || typeof text !== 'string' || !text.trim()) return fallback
+  try {
+    return JSON.parse(text)
+  } catch (err) {
+    console.error('[safeJsonParse] Failed to parse JSON:', text.substring(0, 100))
+    return fallback
+  }
+}
+
 async function extractResponseError(
   res: Response,
 ): Promise<{ code: string | null; message: string }> {
@@ -112,7 +122,7 @@ async function extractResponseError(
   let message = `HTTP ${res.status} ${res.statusText}`
   try {
     const text = await res.text()
-    if (text) {
+    if (text && text.trim()) {
       try {
         const body = JSON.parse(text)
         code = body?.code || null
@@ -165,15 +175,32 @@ export async function fetchSupabaseCount(config: MigrationConfig, table: string)
   const headers = {
     ...buildSupabaseHeaders(config),
     Prefer: 'count=exact',
+    Range: '0-0',
   }
 
   let lastError: any = null
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
-      const res = await fetchWithTimeout(url, { method: 'HEAD', headers })
-      return parseContentRangeCount(res.headers.get('Content-Range'))
+      const res = await fetchWithTimeout(url, { method: 'GET', headers })
+      const contentRange = res.headers.get('Content-Range')
+      const count = parseContentRangeCount(contentRange)
+      // Drain the response body to avoid connection leaks.
+      // We only need the Content-Range header for the count, not the body.
+      await res.text().catch(() => {})
+      if (count === 0 && !contentRange) {
+        console.warn(
+          `[fetchSupabaseCount] Content-Range header missing for "${table}". ` +
+            `The table may be empty or the API did not return a count.`,
+        )
+      }
+      return count
     } catch (err: any) {
       lastError = err
+      console.error(
+        `[fetchSupabaseCount] Error counting "${table}" ` +
+          `(attempt ${attempt + 1}/${MAX_RETRIES + 1}):`,
+        err.message,
+      )
       if (isStatementTimeout(err) || err.name === 'AbortError') {
         if (attempt < MAX_RETRIES) {
           await delay(RETRY_DELAY_MS * (attempt + 1))
