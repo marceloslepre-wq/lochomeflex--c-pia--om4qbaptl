@@ -14,6 +14,7 @@ import Customers from './pages/Customers'
 import Assets from './pages/Assets'
 import Rentals from './pages/Rentals'
 import RentalDetail from './pages/RentalDetail'
+import Locations from './pages/Locations'
 import Settings from './pages/Settings'
 import Guide from './pages/Guide'
 import NotFound from './pages/NotFound'
@@ -52,6 +53,7 @@ const App = () => (
                   <Route path="/customers" element={<Customers />} />
                   <Route path="/rentals" element={<Rentals />} />
                   <Route path="/rentals/:id" element={<RentalDetail />} />
+                  <Route path="/locations" element={<Locations />} />
                   <Route path="/settings" element={<Settings />} />
                   <Route path="/guide" element={<Guide />} />
                   <Route path="/sc-inventory" element={<SkipCloudInventory />} />

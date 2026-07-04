@@ -44,14 +44,21 @@ export const MIGRATION_COLLECTIONS = [
   { id: 'customers', label: 'Clientes', icon: 'Users', order: 1, dependsOn: [] as string[] },
   { id: 'inventory', label: 'Inventário', icon: 'Package', order: 2, dependsOn: [] as string[] },
   {
+    id: 'locations',
+    label: 'Locais de Retirada e Devolução',
+    icon: 'MapPin',
+    order: 3,
+    dependsOn: [] as string[],
+  },
+  {
     id: 'rentals',
     label: 'Locações',
     icon: 'FileText',
-    order: 3,
-    dependsOn: ['customers', 'inventory'],
+    order: 4,
+    dependsOn: ['customers', 'inventory', 'locations'],
   },
-  { id: 'contracts', label: 'Contratos', icon: 'FileSignature', order: 4, dependsOn: ['rentals'] },
-  { id: 'billing', label: 'Cobranças', icon: 'Receipt', order: 5, dependsOn: ['rentals'] },
+  { id: 'contracts', label: 'Contratos', icon: 'FileSignature', order: 5, dependsOn: ['rentals'] },
+  { id: 'billing', label: 'Cobranças', icon: 'Receipt', order: 6, dependsOn: ['rentals'] },
 ] as const
 
 export type MigrationCollectionId = (typeof MIGRATION_COLLECTIONS)[number]['id']
@@ -353,7 +360,11 @@ export async function previewCollection(
   collection: MigrationCollectionId,
 ): Promise<PreviewResult> {
   const sourceTable =
-    collection === 'contracts' || collection === 'billing' ? 'rentals' : collection
+    collection === 'contracts' || collection === 'billing'
+      ? 'rentals'
+      : collection === 'locations'
+        ? 'locais'
+        : collection
 
   let totalRecords = 0
   try {
@@ -406,6 +417,29 @@ export async function previewCollection(
               warnings.push(`Registro ${r.id || '?'} sem diária`)
             }
           }
+        }
+      }
+    } else if (collection === 'locations') {
+      const sourceTable = 'locais'
+      try {
+        const existing = await pb.collection('locations').getFullList()
+        const names = new Set(existing.map((r: any) => r.name).filter(Boolean))
+        for await (const { records } of fetchSupabaseTableBatches(config, sourceTable)) {
+          for (const r of records) {
+            if (r.nome && names.has(r.nome)) duplicates++
+            if (warnings.length < MAX_WARNINGS && !r.nome) {
+              invalid++
+              warnings.push(`Registro ${r.id || '?'} sem nome`)
+            }
+          }
+        }
+      } catch (err: any) {
+        if (warnings.length < MAX_WARNINGS) {
+          warnings.push(
+            isTimeoutError(err)
+              ? `Timeout ao buscar registros: ${err.message}`
+              : `Erro ao buscar registros: ${err.message}`,
+          )
         }
       }
     } else if (collection === 'rentals' || collection === 'contracts' || collection === 'billing') {

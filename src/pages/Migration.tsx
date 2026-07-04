@@ -20,6 +20,7 @@ import {
   Receipt,
   Database,
   ShieldAlert,
+  MapPin,
 } from 'lucide-react'
 import {
   MIGRATION_COLLECTIONS,
@@ -35,7 +36,7 @@ import { MigrationCollectionCard } from '@/components/migration/MigrationCollect
 import { downloadCSV } from '@/lib/export'
 import { useToast } from '@/hooks/use-toast'
 
-const ICONS: Record<string, any> = { Users, Package, FileText, FileSignature, Receipt }
+const ICONS: Record<string, any> = { Users, Package, FileText, FileSignature, Receipt, MapPin }
 
 export default function Migration() {
   const { can } = usePermissions()

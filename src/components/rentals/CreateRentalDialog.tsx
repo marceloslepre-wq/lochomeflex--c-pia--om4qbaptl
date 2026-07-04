@@ -32,12 +32,15 @@ import useMainStore, { Rental, RentalItem } from '@/stores/main'
 import { useToast } from '@/hooks/use-toast'
 import { usePermissions } from '@/hooks/use-permissions'
 import { cn } from '@/lib/utils'
+import { pbLocationService, type LocationRecord } from '@/services/pb-locations'
+import { useEffect } from 'react'
 
 export function CreateRentalDialog({ onCreated }: { onCreated?: (rental: Rental) => void }) {
   const { customers, inventory, addRental, settings } = useMainStore()
   const { toast } = useToast()
   const { can } = usePermissions()
   const [open, setOpen] = useState(false)
+  const [locations, setLocations] = useState<LocationRecord[]>([])
 
   const [customerId, setCustomerId] = useState('')
   const [selectedItemId, setSelectedItemId] = useState('')
@@ -47,9 +50,20 @@ export function CreateRentalDialog({ onCreated }: { onCreated?: (rental: Rental)
   const [defaultDuration, setDefaultDuration] = useState<number | null>(null)
   const [freight, setFreight] = useState<number>(0)
   const [paymentMethod, setPaymentMethod] = useState('PIX')
+  const [pickupLocationPbId, setPickupLocationPbId] = useState('')
+  const [returnLocationPbId, setReturnLocationPbId] = useState('')
 
   const [customerOpen, setCustomerOpen] = useState(false)
   const [itemOpen, setItemOpen] = useState(false)
+
+  useEffect(() => {
+    if (open) {
+      pbLocationService
+        .getLocations()
+        .then((locs) => setLocations(locs.filter((l) => l.active)))
+        .catch(() => {})
+    }
+  }, [open])
 
   const applyDuration = (days: number) => {
     setDefaultDuration(days)
@@ -342,6 +356,8 @@ export function CreateRentalDialog({ onCreated }: { onCreated?: (rental: Rental)
     setOpen(false)
     setCustomerId('')
     setItems([])
+    setPickupLocationPbId('')
+    setReturnLocationPbId('')
   }
 
   return (
@@ -415,40 +431,55 @@ export function CreateRentalDialog({ onCreated }: { onCreated?: (rental: Rental)
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="grid gap-2">
-              <Label>Local de Retirada / Entrega</Label>
-              <Select value={pickupLocationId} onValueChange={setPickupLocationId}>
+              <Label>Local de Retirada</Label>
+              <Select value={pickupLocationPbId} onValueChange={setPickupLocationPbId}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Selecione o local..." />
+                  <SelectValue placeholder="Selecione o local de retirada..." />
                 </SelectTrigger>
                 <SelectContent>
-                  {(Array.isArray(settings?.locations) ? settings.locations : []).map(
-                    (loc: any) => (
-                      <SelectItem key={loc.id} value={loc.id}>
-                        {loc.name}
-                      </SelectItem>
-                    ),
-                  )}
                   <SelectItem value="delivery">Entrega no Endereço do Cliente</SelectItem>
+                  {locations.map((loc) => (
+                    <SelectItem key={loc.id} value={loc.id}>
+                      {loc.name}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
 
             <div className="grid gap-2">
-              <Label>
-                Forma de Pagamento <span className="text-red-500">*</span>
-              </Label>
-              <Select value={paymentMethod} onValueChange={(value) => setPaymentMethod(value)}>
+              <Label>Local de Devolução</Label>
+              <Select value={returnLocationPbId} onValueChange={setReturnLocationPbId}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Selecione a forma de pagamento" />
+                  <SelectValue placeholder="Selecione o local de devolução..." />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="PIX">PIX</SelectItem>
-                  <SelectItem value="Débito">Débito</SelectItem>
-                  <SelectItem value="Crédito">Crédito</SelectItem>
-                  <SelectItem value="Dinheiro">Dinheiro</SelectItem>
+                  <SelectItem value="delivery">Retirada no Endereço do Cliente</SelectItem>
+                  {locations.map((loc) => (
+                    <SelectItem key={loc.id} value={loc.id}>
+                      {loc.name}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
+          </div>
+
+          <div className="grid gap-2">
+            <Label>
+              Forma de Pagamento <span className="text-red-500">*</span>
+            </Label>
+            <Select value={paymentMethod} onValueChange={(value) => setPaymentMethod(value)}>
+              <SelectTrigger>
+                <SelectValue placeholder="Selecione a forma de pagamento" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="PIX">PIX</SelectItem>
+                <SelectItem value="Débito">Débito</SelectItem>
+                <SelectItem value="Crédito">Crédito</SelectItem>
+                <SelectItem value="Dinheiro">Dinheiro</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
 
           <div className="border rounded-md p-4 bg-muted/30 space-y-4">

@@ -144,6 +144,51 @@ export async function executeInventoryMigration(
   return result
 }
 
+export async function executeLocationsMigration(
+  config: MigrationConfig,
+  onProgress?: ProgressCallback,
+): Promise<R> {
+  const result = newResult('locations')
+  let total = 0
+  try {
+    total = await fetchSupabaseCount(config, 'locais')
+  } catch {
+    total = 0
+  }
+  result.total = total
+  const existing = await pb.collection('locations').getFullList()
+  const names = new Set(existing.map((r: any) => r.name).filter(Boolean))
+
+  let offset = 0
+  for await (const { records } of fetchSupabaseTableBatches(config, 'locais')) {
+    await runBatch(
+      records,
+      async (r: any) => {
+        const name = r.nome || r.name || ''
+        if (!name) throw new Error('Nome obrigatório')
+        if (names.has(name)) return 'skipped'
+        await pb.collection('locations').create({
+          name,
+          address: r.address || '',
+          city: r.city || '',
+          state: r.state || '',
+          zip_code: r.zip_code || '',
+          active: r.ativo !== false,
+        })
+        names.add(name)
+        return 'success'
+      },
+      result,
+      offset,
+      total,
+      onProgress,
+      config.throttleDelayMs,
+    )
+    offset += records.length
+  }
+  return result
+}
+
 export async function executeRentalsMigration(
   config: MigrationConfig,
   onProgress?: ProgressCallback,
@@ -286,6 +331,8 @@ export async function executeMigration(
       return executeCustomersMigration(config, onProgress)
     case 'inventory':
       return executeInventoryMigration(config, onProgress)
+    case 'locations':
+      return executeLocationsMigration(config, onProgress)
     case 'rentals':
       return executeRentalsMigration(config, onProgress)
     case 'contracts':

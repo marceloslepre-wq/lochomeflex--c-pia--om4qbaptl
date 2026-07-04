@@ -12,6 +12,7 @@ import {
   Receipt,
   Bot,
   Database,
+  MapPin,
 } from 'lucide-react'
 import {
   Sidebar,
@@ -39,6 +40,7 @@ export function AppSidebar() {
     { title: 'Estoque', url: '/inventory', icon: Package, show: true },
     { title: 'Patrimônio', url: '/assets', icon: Briefcase, show: true },
     { title: 'Locações', url: '/rentals', icon: FileText, show: true },
+    { title: 'Locais', url: '/locations', icon: MapPin, show: true },
     { title: 'Clientes', url: '/customers', icon: Users, show: true },
     { title: 'Estoque (Cloud)', url: '/sc-inventory', icon: Cloud, show: true },
     { title: 'Cobranças', url: '/billing', icon: Receipt, show: true },
