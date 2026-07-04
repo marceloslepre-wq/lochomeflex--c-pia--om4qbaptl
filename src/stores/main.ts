@@ -147,7 +147,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   })
 
   const refreshCustomers = () => {
-    customerService.getCustomers().then(setCustomers).catch(console.error)
+    customerService
+      .getCustomers()
+      .then(setCustomers)
+      .catch((err) => console.error('Failed to fetch customers:', err))
   }
 
   const loadItemAssets = async (id: string): Promise<Asset[]> => {

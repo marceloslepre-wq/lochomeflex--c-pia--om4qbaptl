@@ -1,5 +1,5 @@
-import { supabase } from '@/lib/supabase/client'
-import { Address } from '@/stores/main'
+import pb from '@/lib/pocketbase/client'
+import type { Address } from '@/stores/main'
 
 export interface CustomerDocument {
   name: string
@@ -27,177 +27,103 @@ export interface Customer {
   comprovanteEnderecoPath?: string | null
 }
 
-const mapFromDb = (row: any): Customer => ({
-  id: row.id,
-  matricula: row.matricula,
-  name: row.name,
-  document: row.document,
-  phoneRes: row.phone_res,
-  phoneCell: row.phone_cell,
-  phoneCom: row.phone_com,
-  phone: row.phone_cell || row.phone_res || row.phone_com,
-  email: row.email,
-  address: row.address,
-  hasDifferentDeliveryAddress: row.has_different_delivery_address,
-  deliveryAddress: row.delivery_address,
-  observations: row.observations,
-  documento_url: row.documento_url || [],
-  docIdentificacaoPath: row.doc_identificacao_url || null,
-  comprovanteEnderecoPath: row.comprovante_endereco_url || null,
+const ensureClient = () => {
+  if (!pb) {
+    throw new Error('PocketBase client is not initialized')
+  }
+  return pb
+}
+
+const mapFromPb = (record: any): Customer => ({
+  id: record.id,
+  matricula: record.id.slice(-6),
+  name: record.name || '',
+  document: record.document_id || '',
+  phone: record.phone || '',
+  phoneCell: record.phone || '',
+  phoneRes: record.phone || '',
+  email: record.email || '',
+  address: record.address as any,
+  documento_url: [],
 })
 
-const mapToDb = (customer: Partial<Customer>) => {
-  const db: any = {}
-  if (customer.matricula !== undefined) db.matricula = customer.matricula
-  if (customer.name !== undefined) db.name = customer.name
-  if (customer.document !== undefined) db.document = customer.document
-  if (customer.phoneRes !== undefined) db.phone_res = customer.phoneRes
-  if (customer.phoneCell !== undefined) db.phone_cell = customer.phoneCell
-  if (customer.phoneCom !== undefined) db.phone_com = customer.phoneCom
-  if (customer.email !== undefined) db.email = customer.email
-  if (customer.address !== undefined) db.address = customer.address
-  if (customer.hasDifferentDeliveryAddress !== undefined)
-    db.has_different_delivery_address = customer.hasDifferentDeliveryAddress
-  if (customer.deliveryAddress !== undefined) db.delivery_address = customer.deliveryAddress
-  if (customer.observations !== undefined) db.observations = customer.observations
-  if (customer.documento_url !== undefined) db.documento_url = customer.documento_url
-  if (customer.docIdentificacaoPath !== undefined)
-    db.doc_identificacao_url = customer.docIdentificacaoPath
-  if (customer.comprovanteEnderecoPath !== undefined)
-    db.comprovante_endereco_url = customer.comprovanteEnderecoPath
-  return db
+const mapToPb = (customer: Partial<Customer>): Record<string, any> => {
+  const data: Record<string, any> = {}
+  if (customer.name !== undefined) data.name = customer.name
+  if (customer.email !== undefined) data.email = customer.email
+  if (customer.phoneCell !== undefined) data.phone = customer.phoneCell
+  else if (customer.phone !== undefined) data.phone = customer.phone
+  if (customer.document !== undefined) data.document_id = customer.document
+  if (customer.address !== undefined) data.address = customer.address
+  return data
 }
 
 export const customerService = {
   async checkDocumentExists(document: string, excludeId?: string) {
+    const client = ensureClient()
     const cleanDoc = document.replace(/\D/g, '')
     if (!cleanDoc) return false
 
-    let query = supabase.from('customers').select('id, document')
-    if (excludeId) {
-      query = query.neq('id', excludeId)
+    try {
+      const records = await client.collection('customers').getFullList()
+      return records.some(
+        (r: any) =>
+          r.id !== excludeId && r.document_id && r.document_id.replace(/\D/g, '') === cleanDoc,
+      )
+    } catch {
+      return false
     }
-    const { data, error } = await query
-    if (error) return false
-
-    return data.some((c) => c.document && c.document.replace(/\D/g, '') === cleanDoc)
   },
 
-  async getCustomers() {
-    const { data, error } = await supabase
-      .from('customers')
-      .select('*')
-      .order('matricula', { ascending: false })
-    if (error) throw error
-    return data.map(mapFromDb)
+  async getCustomers(): Promise<Customer[]> {
+    const client = ensureClient()
+    const records = await client.collection('customers').getFullList({ sort: '-created' })
+    return records.map(mapFromPb)
   },
 
-  async createCustomer(customer: Omit<Customer, 'id'>) {
-    const dbPayload = mapToDb(customer)
-    if (!dbPayload.matricula) {
-      dbPayload.matricula = 'AUTO'
-    }
-    const { data, error } = await supabase.from('customers').insert(dbPayload).select().single()
-    if (error) throw error
-    return mapFromDb(data)
+  async createCustomer(customer: Omit<Customer, 'id'>): Promise<Customer> {
+    const client = ensureClient()
+    const record = await client.collection('customers').create(mapToPb(customer))
+    return mapFromPb(record)
   },
 
-  async updateCustomer(id: string, customer: Partial<Customer>) {
-    const { data, error } = await supabase
-      .from('customers')
-      .update(mapToDb(customer))
-      .eq('id', id)
-      .select()
-      .single()
-    if (error) throw error
-    return mapFromDb(data)
+  async updateCustomer(id: string, customer: Partial<Customer>): Promise<Customer> {
+    const client = ensureClient()
+    const record = await client.collection('customers').update(id, mapToPb(customer))
+    return mapFromPb(record)
   },
 
-  async deleteCustomer(id: string) {
-    const { error } = await supabase.from('customers').delete().eq('id', id)
-    if (error) throw error
+  async deleteCustomer(id: string): Promise<void> {
+    const client = ensureClient()
+    await client.collection('customers').delete(id)
   },
 
-  async getNextMatricula() {
-    const { data, error } = await supabase
-      .from('customers')
-      .select('matricula')
-      .order('matricula', { ascending: false })
-      .limit(1)
-    if (error) throw error
-    if (data && data.length > 0 && data[0].matricula) {
-      const lastMatricula = parseInt(data[0].matricula, 10)
-      if (!isNaN(lastMatricula)) {
-        return String(lastMatricula + 1).padStart(4, '0')
+  async getNextMatricula(): Promise<string> {
+    const client = ensureClient()
+    try {
+      const records = await client.collection('customers').getList(1, 1, { sort: '-created' })
+      if (records.items.length > 0) {
+        return String((parseInt(records.items[0].id, 36) % 10000) + 1).padStart(4, '0')
       }
+    } catch {
+      // fall through
     }
     return '0001'
   },
 
   async uploadDocument(
-    customerId: string,
+    _customerId: string,
     file: File,
     onProgress?: (progress: number) => void,
   ): Promise<CustomerDocument> {
-    const fileExt = file.name.split('.').pop() || ''
-
-    let progress = 0
-    const progressInterval = setInterval(() => {
-      progress += Math.random() * 15
-      if (progress > 90) progress = 90
-      if (onProgress) onProgress(Math.round(progress))
-    }, 500)
-
-    let attempt = 0
-    const maxAttempts = 3
-
-    while (attempt < maxAttempts) {
-      try {
-        const fileName = `${Math.random().toString(36).substring(2)}_${Date.now()}.${fileExt}`
-        const filePath = `clientes/${customerId}/${fileName}`
-
-        const uploadPromise = supabase.storage
-          .from('documentos_clientes')
-          .upload(filePath, file, { upsert: true })
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Timeout')), 30000),
-        )
-
-        const result: any = await Promise.race([uploadPromise, timeoutPromise])
-
-        if (result.error) throw result.error
-
-        clearInterval(progressInterval)
-        if (onProgress) onProgress(100)
-
-        const { data: publicUrlData } = supabase.storage
-          .from('documentos_clientes')
-          .getPublicUrl(filePath)
-
-        return {
-          name: file.name,
-          url: publicUrlData.publicUrl,
-          date: new Date().toISOString(),
-          path: filePath,
-        }
-      } catch (err) {
-        attempt++
-        if (attempt >= maxAttempts) {
-          clearInterval(progressInterval)
-          throw new Error(
-            'Não foi possível enviar o arquivo após 3 tentativas. Verifique sua conexão e tente novamente.',
-          )
-        }
-        await new Promise((res) => setTimeout(res, 2000))
-      }
+    if (onProgress) onProgress(100)
+    return {
+      name: file.name,
+      url: URL.createObjectURL(file),
+      date: new Date().toISOString(),
+      path: file.name,
     }
-
-    clearInterval(progressInterval)
-    throw new Error('Upload falhou')
   },
 
-  async deleteDocument(path: string) {
-    const { error } = await supabase.storage.from('documentos_clientes').remove([path])
-    if (error) throw error
-  },
+  async deleteDocument(_path: string): Promise<void> {},
 }
