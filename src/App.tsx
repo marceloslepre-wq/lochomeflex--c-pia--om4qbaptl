@@ -47,6 +47,12 @@ const OverdueChecker = () => {
   return null
 }
 
+    // Run once on app initialization
+    checkOverdue()
+  }, [])
+  return null
+}
+
 const App = () => (
   <BrowserRouter future={{ v7_startTransition: false, v7_relativeSplatPath: false }}>
     <AuthProvider>

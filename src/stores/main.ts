@@ -152,6 +152,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const loadItemAssets = async (id: string): Promise<Asset[]> => {
     try {
+      if (!supabase) return []
       const { data, error } = await supabase.from('patrimonio').select('*').eq('inventory_id', id)
 
       if (error) throw error
@@ -183,6 +184,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setRentals([])
       setUsers([])
       setCurrentUser(null)
+      return
+    }
+
+    if (!supabase) {
+      console.warn(
+        'Supabase client is not initialized — skipping data load and realtime subscription.',
+      )
+      refreshCustomers()
       return
     }
 
@@ -325,6 +334,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }),
     )
 
+    if (!supabase) return rental
+
     const { data } = await supabase
       .from('rentals')
       .insert({
@@ -387,6 +398,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }),
     )
 
+    if (!supabase) return
+
     await supabase
       .from('rentals')
       .update({ status: 'Devolvido', actual_return_date: actualDate })
@@ -428,6 +441,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       )
     }
 
+    if (!supabase) return
+
     await supabase.from('rentals').delete().eq('id', id)
 
     if (rental.status !== 'Devolvido') {
@@ -449,6 +464,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const updateRental = async (id: string, updateData: Partial<Rental>) => {
     setRentals((prev) => prev.map((r) => (r.id === id ? { ...r, ...updateData } : r)))
 
+    if (!supabase) return
+
     const dbUpdate: any = {}
     if (updateData.status) dbUpdate.status = updateData.status
     if (updateData.actualReturnDate) dbUpdate.actual_return_date = updateData.actualReturnDate
@@ -461,6 +478,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const addInventoryItem = async (item: InventoryItem) => {
     const tempId = item.id || Math.random().toString()
     setInventory((prev) => [{ ...item, id: tempId }, ...prev])
+
+    if (!supabase) return
 
     const { data } = await supabase
       .from('inventory')
@@ -492,6 +511,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const updateInventoryItem = async (id: string, data: Partial<InventoryItem>) => {
     setInventory((prev) => prev.map((i) => (i.id === id ? { ...i, ...data } : i)))
 
+    if (!supabase) return
+
     const dbUpdate: any = {}
     if (data.code) dbUpdate.code = data.code
     if (data.name) dbUpdate.name = data.name
@@ -512,6 +533,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const deleteInventoryItem = async (id: string) => {
     setInventory((prev) => prev.filter((i) => i.id !== id))
+    if (!supabase) return
     await supabase.from('inventory').delete().eq('id', id)
   }
 
@@ -535,6 +557,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const updateSettings = async (data: Partial<Settings>) => {
     setSettings((prev) => ({ ...prev, ...data }))
+
+    if (!supabase) return
 
     const updateData: any = {}
     if ('primaryColor' in data) updateData.primary_color = data.primaryColor
@@ -566,6 +590,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const tempId = newUser.id || Math.random().toString()
     setUsers((prev) => [...prev, { ...newUser, id: tempId }])
 
+    if (!supabase) return
+
     const { data } = await supabase
       .from('profiles')
       .insert({
@@ -587,6 +613,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const updateUser = async (id: string, data: Partial<User>) => {
     setUsers((prev) => prev.map((u) => (u.id === id ? { ...u, ...data } : u)))
+    if (!supabase) return
     await supabase
       .from('profiles')
       .update({
@@ -601,6 +628,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const deleteUser = async (id: string) => {
     setUsers((prev) => prev.filter((u) => u.id !== id))
+    if (!supabase) return
     await supabase.from('profiles').delete().eq('id', id)
   }
 
