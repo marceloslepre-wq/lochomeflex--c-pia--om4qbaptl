@@ -39,7 +39,7 @@ export function MigrationCollectionCard({
 }: Props) {
   const [errorsOpen, setErrorsOpen] = useState(false)
   const pct = progress.total > 0 ? (progress.current / progress.total) * 100 : 0
-  const hasErrors = !!(result && result.errors > 0)
+  const hasErrors = !!(result && (result.errors > 0 || (result.warnings || 0) > 0))
 
   return (
     <Card>
@@ -63,6 +63,7 @@ export function MigrationCollectionCard({
                     className="text-xs"
                   >
                     {result.success} ok · {result.skipped} pulados · {result.errors} erros
+                    {result.warnings ? ` · ${result.warnings} avisos` : ''}
                   </Badge>
                 )}
               </div>
@@ -125,7 +126,8 @@ export function MigrationCollectionCard({
           <Collapsible open={errorsOpen} onOpenChange={setErrorsOpen} className="mt-3">
             <CollapsibleTrigger asChild>
               <Button variant="ghost" size="sm" className="w-full">
-                Ver detalhes dos erros ({result!.errors})
+                Ver detalhes ({result!.errors} erros
+                {result!.warnings ? `, ${result!.warnings} avisos` : ''})
                 <ChevronDown
                   className={`w-4 h-4 ml-1 transition-transform ${errorsOpen ? 'rotate-180' : ''}`}
                 />
@@ -133,6 +135,22 @@ export function MigrationCollectionCard({
             </CollapsibleTrigger>
             <CollapsibleContent>
               <div className="mt-2 space-y-2 max-h-64 overflow-y-auto rounded-md border p-2">
+                {result!.warningLog?.map((entry) => (
+                  <div
+                    key={`w-${entry.index}`}
+                    className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 p-2 text-sm"
+                  >
+                    <div className="flex items-center gap-2 mb-1">
+                      <Badge variant="outline" className="text-xs text-amber-600 border-amber-400">
+                        Aviso #{entry.index + 1}
+                      </Badge>
+                      {entry.record?.name && (
+                        <span className="text-muted-foreground truncate">{entry.record.name}</span>
+                      )}
+                    </div>
+                    <p className="text-amber-700 dark:text-amber-400 text-xs">{entry.error}</p>
+                  </div>
+                ))}
                 {result!.errorLog.map((entry) => (
                   <div key={entry.index} className="rounded-md border p-2 text-sm">
                     <div className="flex items-center gap-2 mb-1">

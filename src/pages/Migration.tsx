@@ -33,6 +33,7 @@ import {
 } from '@/services/migration'
 import { executeMigration } from '@/services/migration-executors'
 import { MigrationCollectionCard } from '@/components/migration/MigrationCollectionCard'
+import { MigrationSummaryBanner } from '@/components/migration/MigrationSummaryBanner'
 import { downloadCSV } from '@/lib/export'
 import { useToast } from '@/hooks/use-toast'
 
@@ -202,6 +203,7 @@ export default function Migration() {
           </div>
         </CardContent>
       </Card>
+      {Object.keys(results).length > 0 && <MigrationSummaryBanner results={results} />}
       <div className="space-y-3">
         {MIGRATION_COLLECTIONS.map((col) => {
           const Icon = ICONS[col.icon]

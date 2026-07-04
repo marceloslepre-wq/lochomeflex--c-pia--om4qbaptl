@@ -17,12 +17,22 @@ import {
   consolidatePhone,
   safeJsonParse,
   parseAddressParts,
+  buildCustomerLookupKey,
 } from '@/services/migration'
 
 type R = CollectionMigrationResult
 
 function newResult(c: string): R {
-  return { collection: c, total: 0, success: 0, skipped: 0, errors: 0, errorLog: [] }
+  return {
+    collection: c,
+    total: 0,
+    success: 0,
+    skipped: 0,
+    errors: 0,
+    warnings: 0,
+    errorLog: [],
+    warningLog: [],
+  }
 }
 
 function delay(ms: number): Promise<void> {
@@ -245,6 +255,7 @@ export async function executeRentalsMigration(
   onProgress?: ProgressCallback,
 ): Promise<R> {
   const result = newResult('rentals')
+  const warningLog: MigrationErrorEntry[] = []
   const total = await fetchSupabaseCount(config, 'rentals')
   result.total = total
 
@@ -256,11 +267,28 @@ export async function executeRentalsMigration(
   const docToPb = new Map(
     pbCustomers.filter((c: any) => c.document_id).map((c: any) => [c.document_id, c.id]),
   )
+  const namePhoneToPb = new Map<string, string>()
+  for (const c of pbCustomers) {
+    const cname = c.name || ''
+    const cphone = c.phone || ''
+    if (cname && cphone) {
+      namePhoneToPb.set(buildCustomerLookupKey(cname, cphone), c.id)
+    }
+  }
   const custMap = new Map<string, string>()
   for (const c of sbCustomers) {
     const pbId =
       (c.email && emailToPb.get(c.email)) || (c.document && docToPb.get(c.document)) || null
-    if (pbId) custMap.set(c.id, pbId)
+    if (pbId) {
+      custMap.set(c.id, pbId)
+      continue
+    }
+    const sbName = c.name || ''
+    const sbPhone = consolidatePhone(c)
+    if (sbName && sbPhone) {
+      const fallbackId = namePhoneToPb.get(buildCustomerLookupKey(sbName, sbPhone))
+      if (fallbackId) custMap.set(c.id, fallbackId)
+    }
   }
 
   const sbInv = await fetchSupabaseTable(config, 'inventory')
@@ -293,11 +321,11 @@ export async function executeRentalsMigration(
   for await (const { records } of fetchSupabaseTableBatches(config, 'rentals')) {
     await runBatch(
       records,
-      async (r: any) => {
+      async (r: any, i: number) => {
         const custPbId = r.customer_id ? custMap.get(r.customer_id) : null
         if (!custPbId)
           throw new Error(
-            `Cliente não encontrado (SB ID: ${r.customer_id || 'n/a'}). Verifique se o cliente foi migrado corretamente.`,
+            `Cliente não encontrado por email, documento ou nome/telefone (SB ID: ${r.customer_id || 'n/a'}). Verifique se o cliente foi migrado corretamente.`,
           )
         const rentalKey = `${custPbId}:${r.start_date}`
         if (existingRentalKeys.has(rentalKey)) return 'skipped'
@@ -315,10 +343,13 @@ export async function executeRentalsMigration(
                 return pbId
               })
               .filter(Boolean) as string[]
-            if (missingItems.length > 0)
-              throw new Error(
-                `Itens de inventário não encontrados (SB IDs: ${missingItems.join(', ')}). Verifique se os itens foram migrados.`,
-              )
+            if (missingItems.length > 0) {
+              warningLog.push({
+                index: offset + i,
+                record: r,
+                error: `Itens de inventário não encontrados (SB IDs: ${missingItems.join(', ')}). Locação criada sem estes itens — revise manualmente.`,
+              })
+            }
           }
         }
         const pickupLocationId = r.local_retirada_id
@@ -349,6 +380,8 @@ export async function executeRentalsMigration(
     )
     offset += records.length
   }
+  result.warnings = warningLog.length
+  result.warningLog = warningLog
   return result
 }
 

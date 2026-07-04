@@ -26,7 +26,9 @@ export interface CollectionMigrationResult {
   success: number
   skipped: number
   errors: number
+  warnings: number
   errorLog: MigrationErrorEntry[]
+  warningLog: MigrationErrorEntry[]
 }
 
 export interface PreviewResult {
@@ -390,6 +392,14 @@ export function stringifyAddress(addr: any): string {
 
 export function consolidatePhone(r: any): string {
   return r.phone_cell || r.phone_res || r.phone_com || r.phone || ''
+}
+
+export function normalizeForComparison(value: string): string {
+  return (value || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase()
+}
+
+export function buildCustomerLookupKey(name: string, phone: string): string {
+  return `${normalizeForComparison(name)}:${normalizeForComparison(phone)}`
 }
 
 export function parseAddressParts(rawAddress: string): {
