@@ -1,4 +1,5 @@
 import useMainStore from '@/stores/main'
+import pb from '@/lib/pocketbase/client'
 
 export type PermissionKey =
   | 'items:write'
@@ -11,7 +12,9 @@ export type PermissionKey =
   | 'editar_contratos'
 
 export function usePermissions() {
-  const { currentUser } = useMainStore()
+  const { currentUser: storeUser } = useMainStore()
+
+  const currentUser = pb.authStore.record || storeUser
 
   const can = (perm: PermissionKey) => {
     if (!currentUser) return false
