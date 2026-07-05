@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-04T23:52:54.561Z",
+  "generatedAt": "2026-07-05T10:51:55.603Z",
   "collections": [
     {
       "name": "users",
@@ -29,29 +29,21 @@
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": [
-            "onCreate"
-          ]
+          "autodateTriggers": ["onCreate"]
         },
         {
           "name": "updated",
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": [
-            "onCreate",
-            "onUpdate"
-          ]
+          "autodateTriggers": ["onCreate", "onUpdate"]
         },
         {
           "name": "role",
           "type": "select",
           "required": false,
           "system": false,
-          "selectValues": [
-            "Administrador",
-            "Usuario"
-          ]
+          "selectValues": ["Administrador", "Usuario"]
         }
       ],
       "indexes": [
@@ -105,24 +97,17 @@
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": [
-            "onCreate"
-          ]
+          "autodateTriggers": ["onCreate"]
         },
         {
           "name": "updated",
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": [
-            "onCreate",
-            "onUpdate"
-          ]
+          "autodateTriggers": ["onCreate", "onUpdate"]
         }
       ],
-      "indexes": [
-        "CREATE UNIQUE INDEX idx_customers_email ON customers (email) WHERE email != ''"
-      ]
+      "indexes": ["CREATE UNIQUE INDEX idx_customers_email ON customers (email) WHERE email != ''"]
     },
     {
       "name": "inventory",
@@ -170,12 +155,7 @@
           "type": "select",
           "required": false,
           "system": false,
-          "selectValues": [
-            "available",
-            "rented",
-            "maintenance",
-            "lost"
-          ]
+          "selectValues": ["available", "rented", "maintenance", "lost"]
         },
         {
           "name": "image",
@@ -188,19 +168,14 @@
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": [
-            "onCreate"
-          ]
+          "autodateTriggers": ["onCreate"]
         },
         {
           "name": "updated",
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": [
-            "onCreate",
-            "onUpdate"
-          ]
+          "autodateTriggers": ["onCreate", "onUpdate"]
         }
       ],
       "indexes": [
@@ -257,31 +232,21 @@
           "type": "select",
           "required": false,
           "system": false,
-          "selectValues": [
-            "pending",
-            "active",
-            "completed",
-            "cancelled"
-          ]
+          "selectValues": ["pending", "active", "completed", "cancelled"]
         },
         {
           "name": "created",
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": [
-            "onCreate"
-          ]
+          "autodateTriggers": ["onCreate"]
         },
         {
           "name": "updated",
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": [
-            "onCreate",
-            "onUpdate"
-          ]
+          "autodateTriggers": ["onCreate", "onUpdate"]
         },
         {
           "name": "pickup_location",
@@ -298,9 +263,7 @@
           "collectionRef": "locations"
         }
       ],
-      "indexes": [
-        "CREATE INDEX idx_rentals_status ON rentals (status)"
-      ]
+      "indexes": ["CREATE INDEX idx_rentals_status ON rentals (status)"]
     },
     {
       "name": "contracts",
@@ -337,19 +300,14 @@
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": [
-            "onCreate"
-          ]
+          "autodateTriggers": ["onCreate"]
         },
         {
           "name": "updated",
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": [
-            "onCreate",
-            "onUpdate"
-          ]
+          "autodateTriggers": ["onCreate", "onUpdate"]
         }
       ],
       "indexes": []
@@ -389,11 +347,7 @@
           "type": "select",
           "required": false,
           "system": false,
-          "selectValues": [
-            "unpaid",
-            "paid",
-            "overdue"
-          ]
+          "selectValues": ["unpaid", "paid", "overdue"]
         },
         {
           "name": "payment_method",
@@ -406,24 +360,17 @@
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": [
-            "onCreate"
-          ]
+          "autodateTriggers": ["onCreate"]
         },
         {
           "name": "updated",
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": [
-            "onCreate",
-            "onUpdate"
-          ]
+          "autodateTriggers": ["onCreate", "onUpdate"]
         }
       ],
-      "indexes": [
-        "CREATE INDEX idx_billing_status ON billing (status)"
-      ]
+      "indexes": ["CREATE INDEX idx_billing_status ON billing (status)"]
     },
     {
       "name": "locations",
@@ -477,24 +424,17 @@
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": [
-            "onCreate"
-          ]
+          "autodateTriggers": ["onCreate"]
         },
         {
           "name": "updated",
           "type": "autodate",
           "required": false,
           "system": false,
-          "autodateTriggers": [
-            "onCreate",
-            "onUpdate"
-          ]
+          "autodateTriggers": ["onCreate", "onUpdate"]
         }
       ],
-      "indexes": [
-        "CREATE INDEX idx_locations_name ON locations (name)"
-      ]
+      "indexes": ["CREATE INDEX idx_locations_name ON locations (name)"]
     }
   ]
 }

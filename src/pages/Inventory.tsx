@@ -1,6 +1,5 @@
-import { useState, useEffect } from 'react'
+import { useState, useMemo } from 'react'
 import { Link } from 'react-router-dom'
-import { supabase } from '@/lib/supabase/client'
 import useMainStore from '@/stores/main'
 import { Card, CardContent } from '@/components/ui/card'
 import {
@@ -14,7 +13,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Search, Download, ExternalLink, Trash2, Share2 } from 'lucide-react'
+import { Search, Download, ExternalLink, Trash2 } from 'lucide-react'
 import {
   Select,
   SelectContent,
@@ -65,38 +64,19 @@ export default function Inventory() {
   const [categoryFilter, setCategoryFilter] = useState('Todas')
   const [statusFilter, setStatusFilter] = useState('Todos')
   const [locationFilter, setLocationFilter] = useState('TODOS')
-  const [locationsStock, setLocationsStock] = useState<any[]>([])
 
-  const fetchLocations = async () => {
-    const { data } = await supabase.from('inventory_locations').select('*')
-    if (data) setLocationsStock(data)
-  }
-
-  useEffect(() => {
-    fetchLocations()
-  }, [])
-
-  const categories = Array.from(new Set(inventory.map((i) => i.category)))
+  const categories = useMemo(
+    () => Array.from(new Set(inventory.map((i) => i.category).filter(Boolean))),
+    [inventory],
+  )
 
   const filtered = inventory.filter((i) => {
-    const term = search || globalSearch
+    const term = (search || globalSearch || '').toLowerCase()
     const matchesSearch =
-      (i.name || '').toLowerCase().includes(term.toLowerCase()) ||
-      (i.code || '').toLowerCase().includes(term.toLowerCase())
+      (i.name || '').toLowerCase().includes(term) || (i.code || '').toLowerCase().includes(term)
     const matchesCategory = categoryFilter === 'Todas' || i.category === categoryFilter
 
-    if (locationFilter !== 'TODOS') {
-      const locStock = locationsStock.find(
-        (ls) => ls.inventory_id === i.id && ls.location_id === locationFilter,
-      )
-      if (!locStock || locStock.quantity <= 0) return false
-    }
-
-    const itemAvailableQty =
-      locationFilter === 'TODOS'
-        ? i.availableQty
-        : locationsStock.find((ls) => ls.inventory_id === i.id && ls.location_id === locationFilter)
-            ?.available_qty || 0
+    const itemAvailableQty = i.availableQty || 0
 
     let matchesStatus = true
     if (statusFilter === 'Disponíveis')
@@ -111,27 +91,9 @@ export default function Inventory() {
     return matchesSearch && matchesCategory && matchesStatus
   })
 
-  const getTotal = (item: any) => {
-    if (locationFilter === 'TODOS') return item.totalQty
-    return (
-      locationsStock.find((ls) => ls.inventory_id === item.id && ls.location_id === locationFilter)
-        ?.quantity || 0
-    )
-  }
-  const getRented = (item: any) => {
-    if (locationFilter === 'TODOS') return item.rentedQty
-    return (
-      locationsStock.find((ls) => ls.inventory_id === item.id && ls.location_id === locationFilter)
-        ?.rented_qty || 0
-    )
-  }
-  const getAvailable = (item: any) => {
-    if (locationFilter === 'TODOS') return item.availableQty
-    return (
-      locationsStock.find((ls) => ls.inventory_id === item.id && ls.location_id === locationFilter)
-        ?.available_qty || 0
-    )
-  }
+  const getTotal = (item: any) => item.totalQty || 0
+  const getRented = (item: any) => item.rentedQty || 0
+  const getAvailable = (item: any) => item.availableQty || 0
 
   const exportData = () => {
     const headers = [
@@ -212,7 +174,7 @@ export default function Inventory() {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <TransferInventoryDialog onSuccess={fetchLocations} />
+          <TransferInventoryDialog />
           <CreateItemDialog />
         </div>
       </div>
@@ -285,7 +247,7 @@ export default function Inventory() {
             <TableBody>
               {filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="h-24 text-center text-muted-foreground">
+                  <TableCell colSpan={9} className="h-24 text-center text-muted-foreground">
                     Nenhum item encontrado.
                   </TableCell>
                 </TableRow>
@@ -294,11 +256,13 @@ export default function Inventory() {
                   <TableRow key={item.id} className="hover:bg-muted/30 group">
                     <TableCell>
                       <div className="w-12 h-12 rounded-md overflow-hidden bg-muted border">
-                        <img
-                          src={item.image}
-                          alt={item.name}
-                          className="w-full h-full object-cover"
-                        />
+                        {item.image ? (
+                          <img
+                            src={item.image}
+                            alt={item.name}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : null}
                       </div>
                     </TableCell>
                     <TableCell>
