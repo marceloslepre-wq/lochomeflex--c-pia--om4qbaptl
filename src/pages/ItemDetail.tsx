@@ -36,14 +36,20 @@ import { usePermissions } from '@/hooks/use-permissions'
 export default function ItemDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const { inventory, rentals, customers, updateInventoryItem, deleteInventoryItem } = useMainStore()
+  const { inventory, rentals, customers, updateInventoryItem, deleteInventoryItem, loading } =
+    useMainStore()
   const { toast } = useToast()
   const { can } = usePermissions()
 
-  const item = inventory.find((i) => i.id === id)
+  const item = (Array.isArray(inventory) ? inventory : []).find((i) => i?.id === id)
+  if (loading && inventory.length === 0) {
+    return <div className="p-6 text-muted-foreground">Carregando...</div>
+  }
   if (!item) return <div className="p-6">Item não encontrado no sistema.</div>
 
-  const itemRentals = rentals.filter((r) => r.items.some((ri) => ri.itemId === id))
+  const itemRentals = (Array.isArray(rentals) ? rentals : []).filter((r) =>
+    Array.isArray(r?.items) ? r.items.some((ri) => ri?.itemId === id) : false,
+  )
 
   const handleStatusChange = (val: string) => {
     updateInventoryItem(item.id, { conditionStatus: val as any })

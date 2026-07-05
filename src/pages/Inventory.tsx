@@ -57,7 +57,7 @@ const LOCATIONS = [
 ]
 
 export default function Inventory() {
-  const { inventory, globalSearch, deleteInventoryItem, settings } = useMainStore()
+  const { inventory, globalSearch, deleteInventoryItem, settings, loading } = useMainStore()
   const { can } = usePermissions()
   const { toast } = useToast()
   const [search, setSearch] = useState('')
@@ -65,16 +65,18 @@ export default function Inventory() {
   const [statusFilter, setStatusFilter] = useState('Todos')
   const [locationFilter, setLocationFilter] = useState('TODOS')
 
+  const safeInventory = Array.isArray(inventory) ? inventory : []
+
   const categories = useMemo(
-    () => Array.from(new Set(inventory.map((i) => i.category).filter(Boolean))),
-    [inventory],
+    () => Array.from(new Set(safeInventory.map((i) => i?.category).filter(Boolean))),
+    [safeInventory],
   )
 
-  const filtered = inventory.filter((i) => {
+  const filtered = safeInventory.filter((i) => {
     const term = (search || globalSearch || '').toLowerCase()
     const matchesSearch =
-      (i.name || '').toLowerCase().includes(term) || (i.code || '').toLowerCase().includes(term)
-    const matchesCategory = categoryFilter === 'Todas' || i.category === categoryFilter
+      (i?.name || '').toLowerCase().includes(term) || (i?.code || '').toLowerCase().includes(term)
+    const matchesCategory = categoryFilter === 'Todas' || i?.category === categoryFilter
 
     const itemAvailableQty = i.availableQty || 0
 
@@ -122,6 +124,24 @@ export default function Inventory() {
   const handleDelete = (id: string) => {
     deleteInventoryItem(id)
     toast({ title: 'Excluído', description: 'O item foi removido permanentemente.' })
+  }
+
+  if (loading && safeInventory.length === 0) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Gestão de Estoque</h1>
+          <p className="text-muted-foreground mt-1">Controle seus modelos e disponibilidades.</p>
+        </div>
+        <Card>
+          <CardContent className="p-8">
+            <div className="flex items-center justify-center">
+              <div className="animate-pulse text-muted-foreground">Carregando inventário...</div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    )
   }
 
   return (

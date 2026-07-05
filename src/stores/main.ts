@@ -9,7 +9,7 @@ import React, {
 import pb from '@/lib/pocketbase/client'
 import { useAuth } from '@/hooks/use-auth'
 import { useRealtime } from '@/hooks/use-realtime'
-import { customerService, Customer } from '@/services/customers'
+import type { Customer } from '@/services/customers'
 import { PermissionKey } from '@/hooks/use-permissions'
 
 export type Asset = {
@@ -111,6 +111,7 @@ export type Billing = {
 }
 
 interface MainStore {
+  loading: boolean
   currentUser: User | null
   setCurrentUser: (user: User | null) => void
   globalSearch: string
@@ -145,10 +146,11 @@ interface MainStore {
 const StoreContext = createContext<MainStore | null>(null)
 
 const PB_URL = import.meta.env.VITE_POCKETBASE_URL as string
-const pbReady = !!PB_URL && PB_URL.trim() !== ''
+const pbReady = !!PB_URL && PB_URL.trim() !== '' && !!pb
 
 const getPbFileUrl = (record: any, fieldName: string): string | undefined => {
-  const filename = record[fieldName]
+  if (!record) return undefined
+  const filename = record?.[fieldName]
   if (!filename || !record.collectionId) return undefined
   return `${PB_URL}/api/files/${record.collectionId}/${record.id}/${filename}`
 }
@@ -212,40 +214,49 @@ const mapRentalStatusToPb = (status: Rental['status']): string => {
 }
 
 const mapInventoryFromPb = (record: any): InventoryItem => ({
-  id: record.id,
-  code: record.sku || '',
-  name: record.name || '',
-  category: record.category || '',
-  description: record.description || '',
+  id: record?.id || '',
+  code: record?.sku || '',
+  name: record?.name || '',
+  category: record?.category || '',
+  description: record?.description || '',
   totalQty: 1,
-  availableQty: record.status === 'available' ? 1 : 0,
-  rentedQty: record.status === 'rented' ? 1 : 0,
-  conditionStatus: mapInventoryStatusFromPb(record.status),
+  availableQty: record?.status === 'available' ? 1 : 0,
+  rentedQty: record?.status === 'rented' ? 1 : 0,
+  conditionStatus: mapInventoryStatusFromPb(record?.status || 'available'),
   image: getPbFileUrl(record, 'image'),
-  dailyPrice: Number(record.daily_rate) || 0,
+  dailyPrice: Number(record?.daily_rate) || 0,
   monthlyPrice: 0,
   salePrice: 0,
 })
 
 const mapRentalFromPb = (record: any): Rental => ({
-  id: record.id,
-  customerId: record.customer || '',
-  items: Array.isArray(record.items)
+  id: record?.id || '',
+  customerId: record?.customer || '',
+  items: Array.isArray(record?.items)
     ? record.items.map((id: string) => ({ itemId: id, qty: 1 }))
     : [],
-  startDate: record.start_date || '',
-  expectedReturnDate: record.end_date || '',
-  status: mapRentalStatusFromPb(record.status),
-  total: Number(record.total_price) || 0,
+  startDate: record?.start_date || '',
+  expectedReturnDate: record?.end_date || '',
+  status: mapRentalStatusFromPb(record?.status || 'active'),
+  total: Number(record?.total_price) || 0,
 })
 
 const mapBillingFromPb = (record: any): Billing => ({
-  id: record.id,
-  rentalId: record.rental || '',
-  amount: Number(record.amount) || 0,
-  dueDate: record.due_date || '',
-  status: (record.status as Billing['status']) || 'unpaid',
-  paymentMethod: record.payment_method || '',
+  id: record?.id || '',
+  rentalId: record?.rental || '',
+  amount: Number(record?.amount) || 0,
+  dueDate: record?.due_date || '',
+  status: (record?.status as Billing['status']) || 'unpaid',
+  paymentMethod: record?.payment_method || '',
+})
+
+const mapCustomerFromPb = (record: any): Customer => ({
+  id: record?.id || '',
+  name: record?.name || '',
+  email: record?.email || '',
+  phone: record?.phone || '',
+  document: record?.document_id || '',
+  address: record?.address || '',
 })
 
 export function StoreProvider({ children }: { children: ReactNode }) {
@@ -257,6 +268,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [rentals, setRentals] = useState<Rental[]>([])
   const [billing, setBilling] = useState<Billing[]>([])
   const [users, setUsers] = useState<User[]>([])
+  const [loading, setLoading] = useState(true)
   const [settings, setSettings] = useState<Settings>({
     primaryColor: '#1e40af',
     logoUrl: null,
@@ -271,19 +283,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     categories: ['Ferramentas', 'Equipamentos Pesados', 'Acessórios', 'Geral'],
   })
 
-  const refreshCustomers = useCallback(() => {
-    if (!pbReady)
-      return customerService
-        .getCustomers()
-        .then(setCustomers)
-        .catch((err) => console.error('Failed to fetch customers:', err))
+  const refreshCustomers = useCallback(async () => {
+    if (!pbReady) return
+    try {
+      const records = await pb.collection('customers').getFullList({ sort: '-created' })
+      setCustomers((records || []).map(mapCustomerFromPb))
+    } catch (err) {
+      console.error('Failed to fetch customers:', err)
+    }
   }, [])
 
   const refreshInventory = useCallback(async () => {
     if (!pbReady) return
     try {
       const records = await pb.collection('inventory').getFullList({ sort: '-created' })
-      setInventory(records.map(mapInventoryFromPb))
+      setInventory((records || []).map(mapInventoryFromPb))
     } catch (err) {
       console.error('Failed to fetch inventory:', err)
     }
@@ -296,7 +310,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         sort: '-created',
         expand: 'customer,items',
       })
-      setRentals(records.map(mapRentalFromPb))
+      setRentals((records || []).map(mapRentalFromPb))
     } catch (err) {
       console.error('Failed to fetch rentals:', err)
     }
@@ -309,7 +323,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         sort: '-created',
         expand: 'rental.customer',
       })
-      setBilling(records.map(mapBillingFromPb))
+      setBilling((records || []).map(mapBillingFromPb))
     } catch (err) {
       console.error('Failed to fetch billing:', err)
     }
@@ -323,11 +337,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setBilling([])
       setUsers([])
       setCurrentUser(null)
+      setLoading(false)
       return
     }
 
     if (!pbReady) {
       console.warn('PocketBase URL is not configured — data will not load.')
+      setLoading(false)
       return
     }
 
@@ -345,10 +361,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setUsers([mappedUser])
     }
 
-    refreshCustomers()
-    refreshInventory()
-    refreshRentals()
-    refreshBilling()
+    setLoading(true)
+    Promise.all([
+      refreshCustomers(),
+      refreshInventory(),
+      refreshRentals(),
+      refreshBilling(),
+    ]).finally(() => setLoading(false))
   }, [user?.id, refreshCustomers, refreshInventory, refreshRentals, refreshBilling])
 
   useRealtime(
@@ -562,25 +581,38 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }
 
   const addCustomer = async (c: Customer) => {
-    setCustomers((prev) => [c, ...prev])
+    const tempId = c.id || Math.random().toString()
+    setCustomers((prev) => [{ ...c, id: tempId }, ...prev])
     if (!pbReady) return
     try {
-      await customerService.createCustomer(c)
-      refreshCustomers()
+      const record = await pb.collection('customers').create({
+        name: c.name,
+        email: c.email || '',
+        phone: c.phone || '',
+        document_id: c.document || '',
+        address: c.address || '',
+      })
+      setCustomers((prev) => prev.map((cu) => (cu.id === tempId ? { ...cu, id: record.id } : cu)))
     } catch (err) {
       console.error('Failed to create customer:', err)
-      setCustomers((prev) => prev.filter((cust) => cust.id !== c.id))
+      setCustomers((prev) => prev.filter((cu) => cu.id !== tempId))
     }
   }
 
   const updateCustomer = async (id: string, data: Partial<Customer>) => {
     setCustomers((prev) => prev.map((c) => (c.id === id ? { ...c, ...data } : c)))
     if (!pbReady) return
+    const pbData: Record<string, any> = {}
+    if (data.name !== undefined) pbData.name = data.name
+    if (data.email !== undefined) pbData.email = data.email
+    if (data.phone !== undefined) pbData.phone = data.phone
+    if (data.document !== undefined) pbData.document_id = data.document
+    if (data.address !== undefined) pbData.address = data.address
     try {
-      await customerService.updateCustomer(id, data)
-      refreshCustomers()
+      await pb.collection('customers').update(id, pbData)
     } catch (err) {
       console.error('Failed to update customer:', err)
+      refreshCustomers()
     }
   }
 
@@ -588,9 +620,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setCustomers((prev) => prev.filter((c) => c.id !== id))
     if (!pbReady) return
     try {
-      await customerService.deleteCustomer(id)
+      await pb.collection('customers').delete(id)
     } catch (err) {
       console.error('Failed to delete customer:', err)
+      refreshCustomers()
     }
   }
 
@@ -650,6 +683,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     StoreContext.Provider,
     {
       value: {
+        loading,
         currentUser,
         setCurrentUser,
         globalSearch,
